@@ -33,9 +33,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import (
     Qt, QTimer, pyqtSignal, QObject, QRectF, QSettings, QSize, QDate,
-    QPropertyAnimation, QEasingCurve, QThreadPool
+    QPropertyAnimation, QEasingCurve, QThreadPool, pyqtProperty, QPointF
 )
-from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QIcon, QImage
+from PyQt6.QtGui import (
+    QPixmap, QPainter, QColor, QPen, QIcon, QImage, QLinearGradient,
+    QRadialGradient, QPainterPath
+)
 from supabase import Client
 from office_app.app_config import KEEPALIVE_INTERVAL_MS, LOGO_ASSET, USERS
 from office_app.services.supabase_client import get_supabase
@@ -52,48 +55,22 @@ from office_app.services.student_service import StudentService
 from office_app.services.student_excel_service import StudentExcelService
 from office_app.services.student_list_service import StudentListService
 from office_app.services.workbook_import_service import WorkbookImportService
-
-
-# QSS has no native CSS custom properties. These tokens are expanded when the
-# stylesheet is loaded, giving the application one authoritative color palette.
-DESIGN_TOKENS = {
-    "primary": "#155EEF",
-    "primary_hover": "#0B4DD8",
-    "primary_pressed": "#0A3FAF",
-    "primary_soft": "#EFF4FF",
-    "primary_selected": "#D1E0FF",
-    "secondary": "#475467",
-    "app_background": "#F5F7FA",
-    "surface": "#FFFFFF",
-    "surface_subtle": "#F9FAFB",
-    "text_primary": "#101828",
-    "text_secondary": "#475467",
-    "text_disabled": "#98A2B3",
-    "border": "#D0D5DD",
-    "border_subtle": "#EAECF0",
-    "success": "#067647",
-    "success_hover": "#05603A",
-    "success_pressed": "#054F31",
-    "success_soft": "#ECFDF3",
-    "warning": "#B54708",
-    "warning_hover": "#93370D",
-    "warning_pressed": "#792E0D",
-    "warning_soft": "#FFFAEB",
-    "danger": "#B42318",
-    "danger_hover": "#912018",
-    "danger_pressed": "#7A271A",
-    "danger_soft": "#FEF3F2",
-    "graduated": "#6938EF",
-    "graduated_soft": "#F4F3FF",
-    "on_brand": "#FFFFFF",
-    "splash_start": "#0A3FAF",
-    "splash_end": "#1570EF",
-}
+from office_app.ui import (
+    ActionButton, Card, DESIGN_TOKENS, EmptyState, Spacing, StatusBadge,
+    theme_color,
+)
 
 
 def render_qss(template: str) -> str:
     """Expand @token references because Qt QSS does not support variables."""
-    for name, value in DESIGN_TOKENS.items():
+    dropdown_icon = resource_path(
+        os.path.join("assets", "icons", "chevron-down.svg")
+    ).replace("\\", "/")
+    template = template.replace("@dropdown_icon", dropdown_icon)
+    # Replace longer names first so @primary does not partially consume
+    # @primary_hover, @primary_pressed, and similar prefixed tokens.
+    for name in sorted(DESIGN_TOKENS, key=len, reverse=True):
+        value = DESIGN_TOKENS[name]
         template = template.replace(f"@{name}", value)
     return template
 
@@ -136,6 +113,61 @@ class WorkerSignals(QObject):
     failed    = pyqtSignal(str)
 
 
+class AnimatedSplashPanel(QWidget):
+    """Paint a softly moving brand gradient behind the splash content."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._phase = 0.0
+        self._background_animation = QPropertyAnimation(self, b"phase", self)
+        self._background_animation.setDuration(12000)
+        self._background_animation.setKeyValueAt(0.0, 0.0)
+        self._background_animation.setKeyValueAt(0.5, 1.0)
+        self._background_animation.setKeyValueAt(1.0, 0.0)
+        self._background_animation.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._background_animation.setLoopCount(-1)
+        self._background_animation.start()
+
+    def get_phase(self):
+        return self._phase
+
+    def set_phase(self, value):
+        self._phase = float(value)
+        self.update()
+
+    phase = pyqtProperty(float, get_phase, set_phase)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        bounds = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        clip = QPainterPath()
+        clip.addRoundedRect(bounds, 24, 24)
+        painter.setClipPath(clip)
+
+        width = max(1, self.width())
+        height = max(1, self.height())
+        drift = (self._phase - 0.5) * width * 0.16
+        gradient = QLinearGradient(
+            QPointF(drift, 0), QPointF(width + drift, height)
+        )
+        gradient.setColorAt(0.0, theme_color("splash_start"))
+        gradient.setColorAt(0.52, theme_color("primary"))
+        gradient.setColorAt(1.0, theme_color("splash_end"))
+        painter.fillPath(clip, gradient)
+
+        bloom_x = width * (0.32 + 0.36 * self._phase)
+        bloom = QRadialGradient(QPointF(bloom_x, height * 0.16), width * 0.58)
+        bloom.setColorAt(0.0, theme_color("on_brand", 22))
+        bloom.setColorAt(0.48, theme_color("on_brand", 8))
+        bloom.setColorAt(1.0, theme_color("on_brand", 0))
+        painter.fillPath(clip, bloom)
+
+        painter.setClipping(False)
+        painter.setPen(QPen(theme_color("on_brand", 54), 1))
+        painter.drawRoundedRect(bounds, 24, 24)
+
+
 # ── STARTUP SPLASH ────────────────────────────────────────────────────────────
 
 class StartupDialog(QDialog):
@@ -145,15 +177,44 @@ class StartupDialog(QDialog):
         QDialog {
             background: transparent;
         }
-        QDialog QWidget { background: transparent; }
         QDialog QWidget#SplashPanel {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 @splash_start, stop:0.58 @primary, stop:1 @splash_end);
-            border: 1px solid rgba(255,255,255,0.22);
+            background: transparent;
+            border: none;
             border-radius: 24px;
         }
+        QDialog QWidget#SplashPage { background: transparent; }
         QDialog QLabel { color: white; background: transparent; }
         QDialog QStackedWidget { background: transparent; }
+        QDialog QLabel#SplashOrg {
+            color: rgba(255,255,255,0.76);
+            font-size: 11px;
+            font-weight: 600;
+        }
+        QDialog QLabel#SplashTitle {
+            color: white;
+            font-size: 24px;
+            font-weight: 800;
+        }
+        QDialog QLabel#SplashPrompt {
+            color: rgba(255,255,255,0.88);
+            font-size: 13px;
+            font-weight: 600;
+        }
+        QDialog QLabel#SplashVersion {
+            color: rgba(255,255,255,0.58);
+            font-size: 10px;
+        }
+        QDialog QLabel#SplashWelcome {
+            color: white;
+            font-size: 26px;
+            font-weight: 800;
+        }
+        QDialog QLabel#SplashStatus {
+            color: rgba(255,255,255,0.88);
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
         QDialog QProgressBar {
             border: none;
             border-radius: 4px;
@@ -164,7 +225,7 @@ class StartupDialog(QDialog):
 
         QDialog QPushButton#UserBtn {
             background: rgba(255,255,255,0.12);
-            color: rgba(255,255,255,0.94);
+            color: white;
             border: 1.5px solid rgba(255,255,255,0.40);
             border-radius: 16px;
             padding: 12px 8px;
@@ -181,6 +242,11 @@ class StartupDialog(QDialog):
             color: @primary_pressed;
             border: 2px solid white;
             font-weight: 800;
+        }
+        QDialog QPushButton#UserBtn:pressed {
+            background: @primary_selected;
+            color: @primary_pressed;
+            border: 2px solid white;
         }
 
         QDialog QPushButton#ContinueBtn {
@@ -216,7 +282,7 @@ class StartupDialog(QDialog):
         logo_path = resource_path(LOGO_ASSET)
         if os.path.exists(logo_path):
             self.setWindowIcon(QIcon(logo_path))
-        self.setFixedSize(500, 400)
+        self.setFixedSize(560, 460)
         self.setWindowFlags(
             Qt.WindowType.Dialog |
             Qt.WindowType.CustomizeWindowHint |
@@ -244,13 +310,13 @@ class StartupDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
 
-        panel = QWidget()
+        panel = AnimatedSplashPanel()
         panel.setObjectName("SplashPanel")
         shadow = QGraphicsDropShadowEffect(panel)
         shadow.setBlurRadius(34)
         shadow.setXOffset(0)
         shadow.setYOffset(8)
-        shadow.setColor(QColor(0, 32, 72, 95))
+        shadow.setColor(theme_color("primary_pressed", 95))
         panel.setGraphicsEffect(shadow)
 
         panel_layout = QVBoxLayout(panel)
@@ -262,38 +328,53 @@ class StartupDialog(QDialog):
         self._stack.addWidget(self._build_user_page())
         self._stack.addWidget(self._build_connect_page())
         self._stack.setCurrentIndex(0)
+        self.setWindowOpacity(0.0)
+        QTimer.singleShot(80, self._start_splash_entrance)
 
     # ── Page 1: User Selection ─────────────────────────────────────────────────
     def _build_user_page(self):
         page = QWidget()
-        page.setStyleSheet("background: transparent;")
+        page.setObjectName("SplashPage")
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(48, 32, 48, 32)
+        lay.setContentsMargins(48, 36, 48, 32)
         lay.setSpacing(0)
 
         logo_lbl = QLabel()
-        set_logo_pixmap(logo_lbl, 112, 78)
+        set_logo_pixmap(logo_lbl, 120, 84)
+        logo_effect = QGraphicsOpacityEffect(logo_lbl)
+        logo_lbl.setGraphicsEffect(logo_effect)
+        self._logo_breathe = QPropertyAnimation(logo_effect, b"opacity", self)
+        self._logo_breathe.setDuration(4000)
+        self._logo_breathe.setKeyValueAt(0.0, 0.94)
+        self._logo_breathe.setKeyValueAt(0.5, 1.0)
+        self._logo_breathe.setKeyValueAt(1.0, 0.94)
+        self._logo_breathe.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._logo_breathe.setLoopCount(-1)
+        self._logo_breathe.start()
         lay.addWidget(logo_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
-        lay.addSpacing(10)
+        lay.addSpacing(12)
 
         org = QLabel("YWAM BALUT")
+        self._user_org = org
+        org.setObjectName("SplashOrg")
         org.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        org.setStyleSheet("font-size: 11px; letter-spacing: 4px; color: rgba(255,255,255,0.78); font-weight: 600;")
         lay.addWidget(org)
-        lay.addSpacing(5)
+        lay.addSpacing(8)
 
         title = QLabel("Student Profiling System")
+        self._user_title = title
+        title.setObjectName("SplashTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 22px; font-weight: 800; color: white;")
         lay.addWidget(title)
 
-        lay.addSpacing(26)
+        lay.addSpacing(32)
 
-        who = QLabel("Who's using the app?")
+        who = QLabel("Choose your profile to continue")
+        self._user_prompt = who
+        who.setObjectName("SplashPrompt")
         who.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        who.setStyleSheet("font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.86);")
         lay.addWidget(who)
-        lay.addSpacing(14)
+        lay.addSpacing(16)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
@@ -304,30 +385,44 @@ class StartupDialog(QDialog):
             btn.setObjectName("UserBtn")
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFixedHeight(54)
+            btn.setMinimumHeight(54)
+            btn.setMaximumHeight(60)
             btn.clicked.connect(lambda checked, n=name: self._select_user(n))
             btn_row.addWidget(btn)
             self._user_btns.append(btn)
         self._user_btns[0].setChecked(True)
         lay.addLayout(btn_row)
 
-        lay.addSpacing(22)
+        lay.addSpacing(24)
 
-        continue_btn = QPushButton("Continue ->")
+        continue_btn = QPushButton("Continue  →")
+        self._continue_btn = continue_btn
         continue_btn.setObjectName("ContinueBtn")
         continue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        continue_btn.setFixedSize(210, 44)
+        continue_btn.setFixedHeight(48)
+        continue_btn.setMinimumWidth(224)
+        continue_btn.setMaximumWidth(224)
         continue_btn.clicked.connect(self._on_continue)
         lay.addWidget(continue_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
         lay.addStretch()
 
         ver = QLabel("SSM v1.0 - YWAM Balut")
+        self._user_version = ver
+        ver.setObjectName("SplashVersion")
         ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ver.setStyleSheet("font-size: 10px; color: rgba(255,255,255,0.55);")
         lay.addWidget(ver)
 
         return page
+
+    def _start_splash_entrance(self):
+        """Start compositor-safe splash motion without child paint effects."""
+        self._window_entrance = QPropertyAnimation(self, b"windowOpacity", self)
+        self._window_entrance.setDuration(520)
+        self._window_entrance.setStartValue(0.0)
+        self._window_entrance.setEndValue(1.0)
+        self._window_entrance.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._window_entrance.start()
 
     def _select_user(self, name):
         self.selected_user = name
@@ -346,7 +441,7 @@ class StartupDialog(QDialog):
     # ── Page 2: Connecting ─────────────────────────────────────────────────────
     def _build_connect_page(self):
         page = QWidget()
-        page.setStyleSheet("background: transparent;")
+        page.setObjectName("SplashPage")
         lay = QVBoxLayout(page)
         lay.setContentsMargins(48, 40, 48, 32)
         lay.setSpacing(0)
@@ -357,23 +452,23 @@ class StartupDialog(QDialog):
         lay.addSpacing(8)
 
         org = QLabel("YWAM BALUT")
+        org.setObjectName("SplashOrg")
         org.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        org.setStyleSheet("font-size: 11px; letter-spacing: 4px; color: rgba(255,255,255,0.80); font-weight: 600;")
         lay.addWidget(org)
         lay.addSpacing(4)
 
         title = QLabel("Student Profiling System")
+        title.setObjectName("SplashTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 22px; font-weight: 800; color: white;")
         lay.addWidget(title)
 
         lay.addSpacing(28)
 
         # Welcome label (fades in on success)
         self.welcome_label = QLabel(f"Welcome, {self.selected_user}!")
+        self.welcome_label.setObjectName("SplashWelcome")
         self.welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.welcome_label.setFixedHeight(42)
-        self.welcome_label.setStyleSheet("font-size: 26px; color: white; font-weight: 800;")
         self.welcome_effect = QGraphicsOpacityEffect(self.welcome_label)
         self.welcome_effect.setOpacity(0.0)
         self.welcome_label.setGraphicsEffect(self.welcome_effect)
@@ -381,8 +476,8 @@ class StartupDialog(QDialog):
         lay.addWidget(self.welcome_label)
 
         self.status_label = QLabel("Connecting to database")
+        self.status_label.setObjectName("SplashStatus")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("font-size: 13px; color: rgba(255,255,255,0.88); font-weight: 600; margin-bottom: 8px;")
         lay.addWidget(self.status_label)
 
         lay.addSpacing(14)
@@ -396,8 +491,8 @@ class StartupDialog(QDialog):
         lay.addStretch()
 
         ver = QLabel("SSM v1.0 - YWAM Balut")
+        ver.setObjectName("SplashVersion")
         ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ver.setStyleSheet("font-size: 10px; color: rgba(255,255,255,0.55);")
         lay.addWidget(ver)
 
         return page
@@ -493,7 +588,7 @@ class CircularProgress(QWidget):
         rect = QRectF(margin, margin, self.width() - (margin * 2), self.height() - (margin * 2))
         
         # Draw background track
-        pen_bg = QPen(QColor(DESIGN_TOKENS["border_subtle"]), pen_width)
+        pen_bg = QPen(theme_color("border_subtle"), pen_width)
         painter.setPen(pen_bg)
         painter.drawArc(rect, 0, 360 * 16)
         
@@ -511,7 +606,7 @@ class CircularProgress(QWidget):
         painter.drawArc(rect, 90 * 16, -span_angle) # Start at top (90 degrees)
         
         # Draw percentage text
-        painter.setPen(QColor(DESIGN_TOKENS["text_primary"]))
+        painter.setPen(theme_color("text_primary"))
         font = painter.font()
         font.setPixelSize(max(8, int(self.width() * 0.19)))
         font.setBold(True)
@@ -616,7 +711,6 @@ class StudentApp(QMainWindow):
         self.create_workbook_screen()   # Index 5
         self.create_coordinators_screen()  # Index 6
         self._apply_button_cursors()
-        self._apply_card_shadows()
 
         # Initialize Data
         self.nav_dashboard()
@@ -660,17 +754,6 @@ class StudentApp(QMainWindow):
             button.setCursor(Qt.CursorShape.PointingHandCursor)
         for combo in self.findChildren(QComboBox):
             combo.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def _apply_card_shadows(self):
-        """Give every Card widget a soft, low-key drop shadow for depth."""
-        for w in self.findChildren(QWidget):
-            if w.objectName() == "Card":
-                shadow = QGraphicsDropShadowEffect(w)
-                shadow.setBlurRadius(28)
-                shadow.setXOffset(0)
-                shadow.setYOffset(4)
-                shadow.setColor(QColor(16, 42, 67, 35))
-                w.setGraphicsEffect(shadow)
 
     def apply_modern_stylesheet(self):
         qss_path = resource_path(os.path.join("assets", "styles", "app.qss"))
@@ -919,9 +1002,7 @@ class StudentApp(QMainWindow):
         self.stacked_widget.addWidget(widget)
 
     def _build_card(self, title_text, value_label, tone="primary"):
-        card = QWidget()
-        card.setObjectName("Card")
-        card.setProperty("tone", tone)
+        card = Card(tone=tone)
         card.setFixedHeight(120)
         l = QVBoxLayout(card)
         l.setContentsMargins(24, 16, 24, 16)
@@ -933,8 +1014,7 @@ class StudentApp(QMainWindow):
         return card
 
     def _build_dashboard_list_card(self, title_text, list_widget):
-        card = QWidget()
-        card.setObjectName("Card")
+        card = Card()
         card.setMinimumHeight(260)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -1083,7 +1163,7 @@ class StudentApp(QMainWindow):
             item = QListWidgetItem("All visible records look complete.")
             item.setData(Qt.ItemDataRole.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            item.setForeground(QColor(DESIGN_TOKENS["text_secondary"]))
+            item.setForeground(theme_color("text_secondary"))
             self.dashboard_attention_list.addItem(item)
     # ── SCREEN 1: LIST ────────────────────────────────────────────────────────
     def create_list_screen(self):
@@ -1093,8 +1173,7 @@ class StudentApp(QMainWindow):
         layout.setSpacing(16)
 
         # Filters Card
-        filter_card = QWidget()
-        filter_card.setObjectName("Card")
+        filter_card = Card()
         f_layout = QVBoxLayout(filter_card)
         f_layout.setContentsMargins(16, 16, 16, 16)
         f_layout.setSpacing(16)
@@ -1209,7 +1288,7 @@ class StudentApp(QMainWindow):
         outer.addLayout(top_bar)
 
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        content = QWidget(); content.setObjectName("Card")
+        content = Card()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(32, 24, 32, 24)
         layout.setSpacing(24)
@@ -1352,7 +1431,7 @@ class StudentApp(QMainWindow):
         outer.addLayout(top_bar)
 
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        content = QWidget(); content.setObjectName("Card")
+        content = Card()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
@@ -1441,7 +1520,7 @@ class StudentApp(QMainWindow):
         layout.addLayout(top_bar)
 
         # School year selector
-        sy_card = QWidget(); sy_card.setObjectName("Card")
+        sy_card = Card()
         sy_layout = QHBoxLayout(sy_card)
         sy_layout.setContentsMargins(16, 16, 16, 16)
         sy_layout.setSpacing(8)
@@ -1464,7 +1543,7 @@ class StudentApp(QMainWindow):
         layout.addWidget(sy_card)
 
         # ── Budget card ────────────────────────────────────────────────────
-        budget_card = QWidget(); budget_card.setObjectName("Card")
+        budget_card = Card()
         budget_main = QVBoxLayout(budget_card)
         budget_main.setContentsMargins(16, 16, 16, 16)
         budget_main.setSpacing(8)
@@ -1504,7 +1583,7 @@ class StudentApp(QMainWindow):
         layout.addWidget(budget_card)
 
         # Add expense card
-        add_card = QWidget(); add_card.setObjectName("Card")
+        add_card = Card()
         add_layout = QVBoxLayout(add_card)
         add_layout.setContentsMargins(16, 16, 16, 16)
         add_layout.setSpacing(8)
@@ -1546,7 +1625,7 @@ class StudentApp(QMainWindow):
         layout.addWidget(add_card)
 
         # Expenses table
-        table_card = QWidget(); table_card.setObjectName("Card")
+        table_card = Card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(16, 16, 16, 16)
         table_layout.setSpacing(8)
@@ -1759,15 +1838,21 @@ class StudentApp(QMainWindow):
         header_row.setSpacing(8)
         title = QLabel("Workbook")
         title.setObjectName("SectionTitle")
-        self.workbook_state_badge = QLabel("No Workbook")
-        self.workbook_state_badge.setObjectName("WorkbookStateBadge")
+        self.workbook_state_badge = StatusBadge(
+            "No Workbook", role="WorkbookStateBadge"
+        )
         header_row.addWidget(title)
         header_row.addWidget(self.workbook_state_badge)
         header_row.addStretch()
         layout.addLayout(header_row)
 
         def workbook_btn(text, slot, object_name=None, icon=None):
-            button = QPushButton(text)
+            variant = {
+                "SecondaryBtn": "secondary",
+                "DangerBtn": "danger",
+                "SuccessBtn": "success",
+            }.get(object_name, "primary")
+            button = ActionButton(text, variant=variant)
             if object_name:
                 button.setObjectName(object_name)
             if icon is not None:
@@ -1776,8 +1861,7 @@ class StudentApp(QMainWindow):
             button.clicked.connect(slot)
             return button
 
-        info_card = QWidget()
-        info_card.setObjectName("Card")
+        info_card = Card()
         info_layout = QVBoxLayout(info_card)
         info_layout.setContentsMargins(16, 16, 16, 16)
         info_layout.setSpacing(8)
@@ -1873,28 +1957,22 @@ class StudentApp(QMainWindow):
         toolbar_layout.addLayout(action_row)
         layout.addWidget(toolbar)
 
-        self.workbook_empty_card = QWidget()
-        self.workbook_empty_card.setObjectName("Card")
-        empty_layout = QVBoxLayout(self.workbook_empty_card)
-        empty_layout.setContentsMargins(32, 32, 32, 32)
-        empty_layout.setSpacing(12)
-        empty_title = QLabel("No workbook loaded")
-        empty_title.setObjectName("EmptyStateTitle")
-        empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_btn_row = QHBoxLayout()
-        empty_btn_row.addStretch()
-        empty_saved_btn = QPushButton("Open Saved")
+        empty_actions = QWidget()
+        empty_actions.setObjectName("EmptyStateActions")
+        empty_btn_row = QHBoxLayout(empty_actions)
+        empty_btn_row.setContentsMargins(0, 0, 0, 0)
+        empty_btn_row.setSpacing(Spacing.XS)
+        empty_saved_btn = ActionButton("Open Saved")
         empty_saved_btn.clicked.connect(self.load_saved_workbook)
-        empty_open_btn = QPushButton("Choose File")
-        empty_open_btn.setObjectName("SecondaryBtn")
+        empty_open_btn = ActionButton("Choose File", variant="secondary")
         empty_open_btn.clicked.connect(self.choose_workbook_file)
         empty_btn_row.addWidget(empty_saved_btn)
         empty_btn_row.addWidget(empty_open_btn)
-        empty_btn_row.addStretch()
-        empty_layout.addStretch()
-        empty_layout.addWidget(empty_title)
-        empty_layout.addLayout(empty_btn_row)
-        empty_layout.addStretch()
+        self.workbook_empty_card = EmptyState(
+            "No workbook loaded",
+            "Open the saved workbook or choose an Excel file to begin.",
+            empty_actions,
+        )
         layout.addWidget(self.workbook_empty_card, 1)
 
         self.workbook_tabs = QTabWidget()
@@ -1940,10 +2018,7 @@ class StudentApp(QMainWindow):
             text, state = "Unsaved", "dirty"
         else:
             text, state = "Saved", "saved"
-        self.workbook_state_badge.setText(text)
-        self.workbook_state_badge.setProperty("state", state)
-        self.workbook_state_badge.style().unpolish(self.workbook_state_badge)
-        self.workbook_state_badge.style().polish(self.workbook_state_badge)
+        self.workbook_state_badge.set_state(state, text)
 
     def _on_workbook_sheet_combo_changed(self, index):
         if not hasattr(self, "workbook_tabs") or index < 0:
@@ -2510,7 +2585,7 @@ class StudentApp(QMainWindow):
         item = QListWidgetItem("Select a view above to load student records.")
         item.setData(Qt.ItemDataRole.UserRole, None)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-        item.setForeground(QColor(DESIGN_TOKENS["text_secondary"]))
+        item.setForeground(theme_color("text_secondary"))
         self.list_widget.addItem(item)
 
     def show_area_choice_prompt(self):
@@ -2521,7 +2596,7 @@ class StudentApp(QMainWindow):
             item = QListWidgetItem("No areas found.")
             item.setData(Qt.ItemDataRole.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            item.setForeground(QColor(DESIGN_TOKENS["text_secondary"]))
+            item.setForeground(theme_color("text_secondary"))
             self.list_widget.addItem(item)
             return
 
@@ -2625,8 +2700,8 @@ class StudentApp(QMainWindow):
             header = QListWidgetItem(f"{area}  ({len(students)})")
             header.setData(Qt.ItemDataRole.UserRole, None)
             header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled)
-            header.setForeground(QColor(DESIGN_TOKENS["text_primary"]))
-            header.setBackground(QColor(DESIGN_TOKENS["primary_soft"]))
+            header.setForeground(theme_color("text_primary"))
+            header.setBackground(theme_color("primary_soft"))
             font = header.font()
             font.setBold(True)
             header.setFont(font)

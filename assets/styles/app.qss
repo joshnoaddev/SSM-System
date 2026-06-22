@@ -37,36 +37,57 @@ QPushButton#SidebarRefreshBtn:hover { background: @primary_soft; border-color: @
 QPushButton#SidebarRefreshBtn:pressed { background: @primary_selected; }
 
 /* Buttons */
-QPushButton { min-height: 20px; padding: 8px 16px; border: 1px solid @primary; border-radius: 8px; background: @primary; color: @on_brand; font-weight: 600; }
+QPushButton { min-height: 20px; padding: @space_xs @space_md; border: 1px solid @primary; border-radius: @radius_md; background: @primary; color: @on_brand; font-weight: 600; }
 QPushButton:hover { background: @primary_hover; border-color: @primary_hover; }
 QPushButton:pressed, QPushButton:checked { background: @primary_pressed; border-color: @primary_pressed; }
 QPushButton:disabled { background: @border_subtle; border-color: @border_subtle; color: @text_disabled; }
-QPushButton#SecondaryBtn { background: @surface; border-color: @border; color: @text_primary; }
-QPushButton#SecondaryBtn:hover { background: @surface_subtle; border-color: @primary; color: @primary; }
-QPushButton#SecondaryBtn:pressed, QPushButton#SecondaryBtn:checked { background: @primary_soft; border-color: @primary; color: @primary_pressed; }
-QPushButton#DangerBtn { background: @danger; border-color: @danger; }
-QPushButton#DangerBtn:hover { background: @danger_hover; border-color: @danger_hover; }
-QPushButton#DangerBtn:pressed { background: @danger_pressed; border-color: @danger_pressed; }
-QPushButton#SuccessBtn { background: @success; border-color: @success; }
-QPushButton#SuccessBtn:hover { background: @success_hover; border-color: @success_hover; }
-QPushButton#SuccessBtn:pressed { background: @success_pressed; border-color: @success_pressed; }
-QPushButton#WarningBtn { background: @warning; border-color: @warning; }
-QPushButton#WarningBtn:hover { background: @warning_hover; border-color: @warning_hover; }
-QPushButton#WarningBtn:pressed { background: @warning_pressed; border-color: @warning_pressed; }
+QPushButton#SecondaryBtn, QPushButton[variant="secondary"] { background: @surface; border-color: @border; color: @text_primary; }
+QPushButton#SecondaryBtn:hover, QPushButton[variant="secondary"]:hover { background: @surface_subtle; border-color: @primary; color: @primary; }
+QPushButton#SecondaryBtn:pressed, QPushButton#SecondaryBtn:checked, QPushButton[variant="secondary"]:pressed { background: @primary_soft; border-color: @primary; color: @primary_pressed; }
+QPushButton#DangerBtn, QPushButton[variant="danger"] { background: @danger; border-color: @danger; }
+QPushButton#DangerBtn:hover, QPushButton[variant="danger"]:hover { background: @danger_hover; border-color: @danger_hover; }
+QPushButton#DangerBtn:pressed, QPushButton[variant="danger"]:pressed { background: @danger_pressed; border-color: @danger_pressed; }
+QPushButton#SuccessBtn, QPushButton[variant="success"] { background: @success; border-color: @success; }
+QPushButton#SuccessBtn:hover, QPushButton[variant="success"]:hover { background: @success_hover; border-color: @success_hover; }
+QPushButton#SuccessBtn:pressed, QPushButton[variant="success"]:pressed { background: @success_pressed; border-color: @success_pressed; }
+QPushButton#WarningBtn, QPushButton[variant="warning"] { background: @warning; border-color: @warning; }
+QPushButton#WarningBtn:hover, QPushButton[variant="warning"]:hover { background: @warning_hover; border-color: @warning_hover; }
+QPushButton#WarningBtn:pressed, QPushButton[variant="warning"]:pressed { background: @warning_pressed; border-color: @warning_pressed; }
 
 /* Inputs */
-QLineEdit, QTextEdit, QComboBox, QDoubleSpinBox, QDateEdit { min-height: 20px; padding: 8px 12px; border: 1px solid @border; border-radius: 8px; background: @surface; color: @text_primary; selection-background-color: @primary_selected; selection-color: @text_primary; }
+QLineEdit, QTextEdit, QComboBox, QDoubleSpinBox, QDateEdit { min-height: 20px; padding: @space_xs @space_sm; border: 1px solid @border; border-radius: @radius_md; background: @surface; color: @text_primary; selection-background-color: @primary_selected; selection-color: @text_primary; }
 QLineEdit:hover, QTextEdit:hover, QComboBox:hover, QDoubleSpinBox:hover, QDateEdit:hover { border-color: @text_disabled; }
 QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QDateEdit:focus { border: 2px solid @primary; padding: 8px 12px; }
 QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QDoubleSpinBox:disabled, QDateEdit:disabled { background: @surface_subtle; border-color: @border_subtle; color: @text_disabled; }
 QComboBox, QDateEdit { padding-right: 40px; }
 QComboBox::drop-down, QDateEdit::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 40px; border-left: 1px solid @border; border-top-right-radius: 8px; border-bottom-right-radius: 8px; background: @surface_subtle; }
 QComboBox::drop-down:hover, QDateEdit::drop-down:hover { background: @primary_soft; }
-QComboBox::down-arrow, QDateEdit::down-arrow { image: none; width: 8px; height: 8px; background: @primary; border-radius: 4px; }
+QComboBox::down-arrow, QDateEdit::down-arrow { image: url("@dropdown_icon"); width: 12px; height: 8px; }
 QComboBox QAbstractItemView { padding: 4px; border: 1px solid @border; border-radius: 8px; background: @surface; color: @text_primary; outline: none; selection-background-color: @primary_soft; selection-color: @primary_pressed; }
 
+/* Date picker popup: Qt uses a calendar plus a QMenu for month selection. */
+QCalendarWidget { background: @surface; color: @text_primary; }
+QCalendarWidget QWidget#qt_calendar_navigationbar { background: @primary; }
+QCalendarWidget QToolButton { min-height: 24px; padding: 4px 8px; border: none; border-radius: 4px; background: transparent; color: @on_brand; font-weight: 600; }
+QCalendarWidget QToolButton:hover { background: @primary_hover; }
+QCalendarWidget QToolButton:pressed { background: @primary_pressed; }
+QCalendarWidget QSpinBox { min-height: 24px; padding: 4px 8px; border: none; background: transparent; color: @on_brand; font-weight: 600; selection-background-color: @primary_pressed; }
+QCalendarWidget QAbstractItemView { border: none; background: @surface; alternate-background-color: @surface; color: @text_primary; outline: none; selection-background-color: @primary; selection-color: @on_brand; }
+QCalendarWidget QAbstractItemView::item { padding: 0; border: none; }
+QCalendarWidget QAbstractItemView::item:hover { background: @primary_soft; color: @primary_pressed; }
+QCalendarWidget QAbstractItemView::item:selected { background: @primary; color: @on_brand; }
+QCalendarWidget QAbstractItemView:disabled { color: @text_disabled; }
+
+QMenu { padding: 4px; border: 1px solid @border; border-radius: 8px; background: @surface; color: @text_primary; }
+QMenu::item { min-width: 112px; padding: 8px 16px; border-radius: 4px; background: transparent; color: @text_primary; }
+QMenu::item:selected { background: @primary_soft; color: @primary_pressed; }
+QMenu::item:disabled { color: @text_disabled; }
+QMenu::separator { height: 1px; margin: 4px 8px; background: @border_subtle; }
+
 /* Cards */
-QWidget#Card, QWidget#WorkbookToolbar { background: @surface; border: 1px solid @border_subtle; border-radius: 8px; }
+QWidget#Card, QWidget#WorkbookToolbar { background: @surface; border: 1px solid @border_subtle; border-radius: @radius_md; }
+QWidget#EmptyStateActions { background: transparent; }
+QLabel#EmptyStateDescription { color: @text_secondary; font-size: 13px; }
 QWidget#Card[tone="primary"] { border-left: 4px solid @primary; }
 QWidget#Card[tone="success"] { border-left: 4px solid @success; }
 QWidget#Card[tone="danger"] { border-left: 4px solid @danger; }
