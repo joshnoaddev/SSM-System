@@ -1,0 +1,3503 @@
+import sys
+import subprocess
+
+
+def ensure_packages():
+    # Skip entirely when running as a compiled exe (PyInstaller) — there's no
+    # pip available inside a frozen build, and sys.executable points at the
+    # exe itself rather than a real Python interpreter.
+    if getattr(sys, "frozen", False):
+        return
+    required = ["openpyxl", "pandas", "supabase"]
+    for pkg in required:
+        try:
+            __import__(pkg)
+        except ImportError:
+            print(f"Installing {pkg}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+
+ensure_packages()
+
+import os
+import logging
+import time
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLineEdit, QListWidget, QListWidgetItem, QTextEdit,
+    QLabel, QPushButton, QStackedWidget, QFormLayout, QFileDialog,
+    QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
+    QScrollArea, QComboBox, QStatusBar, QDialog, QTabWidget,
+    QProgressBar, QFrame, QGridLayout, QScrollBar, QDateEdit,
+    QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QStyle
+)
+from PyQt6.QtCore import (
+    Qt, QTimer, pyqtSignal, QObject, QRectF, QSettings, QSize, QDate,
+    QPropertyAnimation, QEasingCurve, QThreadPool
+)
+from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QIcon, QImage
+from supabase import Client
+from office_app.app_config import KEEPALIVE_INTERVAL_MS, LOGO_ASSET, USERS
+from office_app.services.supabase_client import get_supabase
+from office_app.utils.paths import resource_path
+from office_app.utils.background_tasks import BackgroundTask
+from office_app.repositories.coordinator_repository import CoordinatorRepository
+from office_app.repositories.student_repository import StudentRepository
+from office_app.repositories.workbook_repository import WorkbookRepository
+from office_app.services.expense_service import ExpenseService
+from office_app.services.dashboard_service import DashboardService
+from office_app.services.masterlist_service import MasterListService
+from office_app.services.photo_service import PhotoService
+from office_app.services.student_service import StudentService
+from office_app.services.student_excel_service import StudentExcelService
+from office_app.services.student_list_service import StudentListService
+from office_app.services.workbook_import_service import WorkbookImportService
+
+
+
+
+
+def trim_transparent_pixmap(pixmap, alpha_threshold=8):
+    image = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+    left, top = image.width(), image.height()
+    right, bottom = -1, -1
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixelColor(x, y).alpha() > alpha_threshold:
+                left = min(left, x)
+                top = min(top, y)
+                right = max(right, x)
+                bottom = max(bottom, y)
+    if right < left or bottom < top:
+        return pixmap
+    return pixmap.copy(left, top, right - left + 1, bottom - top + 1)
+
+
+def set_logo_pixmap(label, width, height, fallback_text="\u271d"):
+    pix = QPixmap(resource_path(LOGO_ASSET))
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setFixedSize(width, height)
+    if pix.isNull():
+        label.setText(fallback_text)
+        label.setStyleSheet("font-size: 30px; font-weight: 800; color: white;")
+        return
+    pix = trim_transparent_pixmap(pix)
+    label.setPixmap(pix.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+    label.setStyleSheet("background: transparent;")
+
+
+# ── SIGNALS (used to safely call UI from background threads) ──────────────────
+class WorkerSignals(QObject):
+    connected = pyqtSignal()
+    failed    = pyqtSignal(str)
+
+
+# ── STARTUP SPLASH ────────────────────────────────────────────────────────────
+
+class StartupDialog(QDialog):
+    """Two-phase splash: (1) user selection, (2) connection progress."""
+
+    _SPLASH_SS = """
+        QDialog {
+            background: transparent;
+        }
+        QDialog QWidget { background: transparent; }
+        QDialog QWidget#SplashPanel {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 #0b3f8c, stop:0.58 #0b63ce, stop:1 #1a8fd1);
+            border: 1px solid rgba(255,255,255,0.22);
+            border-radius: 24px;
+        }
+        QDialog QLabel { color: white; background: transparent; }
+        QDialog QStackedWidget { background: transparent; }
+        QDialog QProgressBar {
+            border: none;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.22);
+            max-height: 6px;
+        }
+        QDialog QProgressBar::chunk { background: white; border-radius: 4px; }
+
+        QDialog QPushButton#UserBtn {
+            background: rgba(255,255,255,0.12);
+            color: rgba(255,255,255,0.94);
+            border: 1.5px solid rgba(255,255,255,0.40);
+            border-radius: 14px;
+            padding: 13px 10px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        QDialog QPushButton#UserBtn:hover {
+            background: rgba(255,255,255,0.22);
+            border: 1.5px solid rgba(255,255,255,0.76);
+            color: white;
+        }
+        QDialog QPushButton#UserBtn:checked {
+            background: white;
+            color: #0b4aa0;
+            border: 2px solid white;
+            font-weight: 800;
+        }
+
+        QDialog QPushButton#ContinueBtn {
+            background: white;
+            color: #0b4aa0;
+            border: none;
+            border-radius: 22px;
+            padding: 0px;
+            font-size: 14px;
+            font-weight: 800;
+        }
+        QDialog QPushButton#ContinueBtn:hover { background: #eef6ff; color: #073b7a; }
+        QDialog QPushButton#ContinueBtn:pressed { background: #bfdbfe; }
+
+        QDialog QPushButton#RetryBtn {
+            background: white; color: #0b3f8c; border: none;
+            border-radius: 20px; padding: 10px 28px;
+            font-weight: 700; font-size: 13px;
+        }
+        QDialog QPushButton#RetryBtn:hover { background: #dbeafe; }
+        QDialog QPushButton#OfflineBtn {
+            background: rgba(255,255,255,0.12); color: white;
+            border: 1.5px solid rgba(255,255,255,0.35);
+            border-radius: 20px; padding: 10px 28px;
+            font-weight: 700; font-size: 13px;
+        }
+        QDialog QPushButton#OfflineBtn:hover { background: rgba(255,255,255,0.22); }
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("YWAM Balut SSM")
+        logo_path = resource_path(LOGO_ASSET)
+        if os.path.exists(logo_path):
+            self.setWindowIcon(QIcon(logo_path))
+        self.setFixedSize(500, 400)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog |
+            Qt.WindowType.CustomizeWindowHint |
+            Qt.WindowType.FramelessWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        # Apply stylesheet AFTER setting flags; prepend * reset to override app-level QPushButton
+        ss = "* { font-family: 'Segoe UI', Arial, sans-serif; }\n" + self._SPLASH_SS
+        self.setStyleSheet(ss)
+
+        self.success = False
+        self.error_msg = ""
+        self.selected_user = USERS[0]
+        self._welcome_anim = None
+        self._progress_anim = None
+        self._dot_timer = None
+        self._dot_count = 0
+        self._pending_sb = None
+
+        self._signals = WorkerSignals()
+        self._signals.connected.connect(self._on_connected)
+        self._signals.failed.connect(self._on_failed)
+
+        # ── Root stacked layout (page 0 = user select, page 1 = connecting) ──
+        root = QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+
+        panel = QWidget()
+        panel.setObjectName("SplashPanel")
+        shadow = QGraphicsDropShadowEffect(panel)
+        shadow.setBlurRadius(34)
+        shadow.setXOffset(0)
+        shadow.setYOffset(8)
+        shadow.setColor(QColor(0, 32, 72, 95))
+        panel.setGraphicsEffect(shadow)
+
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        self._stack = QStackedWidget()
+        panel_layout.addWidget(self._stack)
+        root.addWidget(panel)
+
+        self._stack.addWidget(self._build_user_page())
+        self._stack.addWidget(self._build_connect_page())
+        self._stack.setCurrentIndex(0)
+
+    # ── Page 1: User Selection ─────────────────────────────────────────────────
+    def _build_user_page(self):
+        page = QWidget()
+        page.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(48, 34, 48, 30)
+        lay.setSpacing(0)
+
+        logo_lbl = QLabel()
+        set_logo_pixmap(logo_lbl, 112, 78)
+        lay.addWidget(logo_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
+        lay.addSpacing(10)
+
+        org = QLabel("YWAM BALUT")
+        org.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        org.setStyleSheet("font-size: 11px; letter-spacing: 4px; color: rgba(255,255,255,0.78); font-weight: 600;")
+        lay.addWidget(org)
+        lay.addSpacing(5)
+
+        title = QLabel("Student Profiling System")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 22px; font-weight: 800; color: white;")
+        lay.addWidget(title)
+
+        lay.addSpacing(26)
+
+        who = QLabel("Who's using the app?")
+        who.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        who.setStyleSheet("font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.86);")
+        lay.addWidget(who)
+        lay.addSpacing(14)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        self._user_btns = []
+        for name in USERS:
+            btn = QPushButton(name)
+            btn.setObjectName("UserBtn")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(54)
+            btn.clicked.connect(lambda checked, n=name: self._select_user(n))
+            btn_row.addWidget(btn)
+            self._user_btns.append(btn)
+        self._user_btns[0].setChecked(True)
+        lay.addLayout(btn_row)
+
+        lay.addSpacing(22)
+
+        continue_btn = QPushButton("Continue ->")
+        continue_btn.setObjectName("ContinueBtn")
+        continue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        continue_btn.setFixedSize(210, 44)
+        continue_btn.clicked.connect(self._on_continue)
+        lay.addWidget(continue_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        lay.addStretch()
+
+        ver = QLabel("SSM v1.0 - YWAM Balut")
+        ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ver.setStyleSheet("font-size: 10px; color: rgba(255,255,255,0.55);")
+        lay.addWidget(ver)
+
+        return page
+
+    def _select_user(self, name):
+        self.selected_user = name
+        for btn in self._user_btns:
+            btn.setChecked(btn.text() == name)
+
+    def _on_continue(self):
+        self._stack.setCurrentIndex(1)
+        if self._pending_sb is not None:
+            self.start_ping(self._pending_sb)
+
+    def queue_ping(self, sb: Client):
+        """Call this before exec() so the ping fires after the user clicks Continue."""
+        self._pending_sb = sb
+
+    # ── Page 2: Connecting ─────────────────────────────────────────────────────
+    def _build_connect_page(self):
+        page = QWidget()
+        page.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(52, 42, 52, 34)
+        lay.setSpacing(0)
+
+        logo_lbl = QLabel()
+        set_logo_pixmap(logo_lbl, 118, 82)
+        lay.addWidget(logo_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
+        lay.addSpacing(8)
+
+        org = QLabel("YWAM BALUT")
+        org.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        org.setStyleSheet("font-size: 11px; letter-spacing: 4px; color: rgba(255,255,255,0.80); font-weight: 600;")
+        lay.addWidget(org)
+        lay.addSpacing(4)
+
+        title = QLabel("Student Profiling System")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 22px; font-weight: 800; color: white;")
+        lay.addWidget(title)
+
+        lay.addSpacing(28)
+
+        # Welcome label (fades in on success)
+        self.welcome_label = QLabel(f"Welcome, {self.selected_user}!")
+        self.welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.welcome_label.setFixedHeight(42)
+        self.welcome_label.setStyleSheet("font-size: 26px; color: white; font-weight: 800;")
+        self.welcome_effect = QGraphicsOpacityEffect(self.welcome_label)
+        self.welcome_effect.setOpacity(0.0)
+        self.welcome_label.setGraphicsEffect(self.welcome_effect)
+        self.welcome_label.setVisible(False)
+        lay.addWidget(self.welcome_label)
+
+        self.status_label = QLabel("Connecting to database")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet("font-size: 13px; color: rgba(255,255,255,0.88); font-weight: 600; margin-bottom: 10px;")
+        lay.addWidget(self.status_label)
+
+        lay.addSpacing(14)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(6)
+        lay.addWidget(self.progress)
+
+        lay.addStretch()
+
+        ver = QLabel("SSM v1.0 - YWAM Balut")
+        ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ver.setStyleSheet("font-size: 10px; color: rgba(255,255,255,0.55);")
+        lay.addWidget(ver)
+
+        return page
+    # ── Connection logic ───────────────────────────────────────────────────────
+    def start_ping(self, sb: Client):
+        # Update welcome text now that we know the user
+        self.welcome_label.setText(f"Welcome, {self.selected_user}!")
+        self._start_dot_anim()
+
+        task = BackgroundTask(lambda: StudentRepository(client=sb).ping())
+        task.signals.succeeded.connect(lambda _rows: self._signals.connected.emit())
+        task.signals.failed.connect(
+            lambda error: self._signals.failed.emit(error.strip().splitlines()[-1])
+        )
+        QThreadPool.globalInstance().start(task)
+
+    def _start_dot_anim(self):
+        self._dot_count = 0
+        self._dot_timer = QTimer(self)
+        self._dot_timer.setInterval(420)
+        self._dot_timer.timeout.connect(self._tick_dots)
+        self._dot_timer.start()
+
+    def _tick_dots(self):
+        self._dot_count = (self._dot_count + 1) % 4
+        self.status_label.setText("Connecting to database" + "." * self._dot_count)
+
+    def _on_connected(self):
+        if self._dot_timer:
+            self._dot_timer.stop()
+        self.success = True
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.status_label.setText("Connected - opening workspace...")
+        self.welcome_label.setVisible(True)
+
+        self._welcome_anim = QPropertyAnimation(self.welcome_effect, b"opacity", self)
+        self._welcome_anim.setDuration(600)
+        self._welcome_anim.setStartValue(0.0)
+        self._welcome_anim.setEndValue(1.0)
+        self._welcome_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self._progress_anim = QPropertyAnimation(self.progress, b"value", self)
+        self._progress_anim.setDuration(850)
+        self._progress_anim.setStartValue(0)
+        self._progress_anim.setEndValue(100)
+        self._progress_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self._welcome_anim.start()
+        self._progress_anim.start()
+        QTimer.singleShot(1350, self.accept)
+
+    def _on_failed(self, msg):
+        if self._dot_timer:
+            self._dot_timer.stop()
+        self.error_msg = msg
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.status_label.setText("Could not reach database")
+        connect_page = self._stack.widget(1)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        retry_btn   = QPushButton("Retry")
+        offline_btn = QPushButton("Continue Offline")
+        retry_btn.setObjectName("RetryBtn")
+        offline_btn.setObjectName("OfflineBtn")
+        retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        offline_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Insert above the version label (last widget)
+        connect_page.layout().insertLayout(connect_page.layout().count() - 1, btn_row)
+        btn_row.addWidget(retry_btn)
+        btn_row.addWidget(offline_btn)
+        retry_btn.clicked.connect(lambda: QMessageBox.information(self, "Retry", "Please restart the application to retry."))
+        offline_btn.clicked.connect(self.reject)
+
+# ── MAIN APP ──────────────────────────────────────────────────────────────────
+class CircularProgress(QWidget):
+    def __init__(self, parent=None, size=96):
+        super().__init__(parent)
+        self.value = 0
+        self.setFixedSize(size, size)
+
+    def set_value(self, val):
+        self.value = val
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        pen_width = max(4, int(self.width() * 0.07))
+        margin = pen_width + 2
+        rect = QRectF(margin, margin, self.width() - (margin * 2), self.height() - (margin * 2))
+        
+        # Draw background track
+        pen_bg = QPen(QColor("#e2e8f0"), pen_width)
+        painter.setPen(pen_bg)
+        painter.drawArc(rect, 0, 360 * 16)
+        
+        # Determine color based on completion
+        if self.value == 100: color = "#43a047"      # Green
+        elif self.value >= 75: color = "#1976d2"     # Blue
+        elif self.value >= 50: color = "#f57c00"     # Orange
+        else: color = "#d32f2f"                      # Red
+        
+        # Draw progress arc
+        pen_fg = QPen(QColor(color), pen_width)
+        pen_fg.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen_fg)
+        span_angle = int((self.value / 100) * 360 * 16)
+        painter.drawArc(rect, 90 * 16, -span_angle) # Start at top (90 degrees)
+        
+        # Draw percentage text
+        painter.setPen(QColor("#243b53"))
+        font = painter.font()
+        font.setPixelSize(max(8, int(self.width() * 0.19)))
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{self.value}%")
+
+class StudentApp(QMainWindow):
+    def __init__(self, sb: Client, initial_user: str = "Joshua"):
+        super().__init__()
+        self.sb = sb
+        self.student_service = StudentService()
+        self.student_repository = self.student_service.repository
+        self.student_excel_service = StudentExcelService(self.student_repository)
+        self.student_list_service = StudentListService(self.student_service)
+        self.dashboard_service = DashboardService()
+        self.photo_service = PhotoService()
+        self.expense_service = ExpenseService()
+        self.coordinator_repository = CoordinatorRepository()
+        self.workbook_repository = WorkbookRepository()
+        self.workbook_import_service = WorkbookImportService(
+            self.student_repository,
+            self.coordinator_repository,
+            self.workbook_repository,
+        )
+        self.masterlist_service = MasterListService(self.workbook_import_service)
+        self.thread_pool = QThreadPool(self)
+        self._initial_user = initial_user
+        self.current_student_id = None
+        self._pending_photo = None
+        self._editing_id = None
+        self._workbook = None
+        self._workbook_path = None
+        self._loaded_workbook_sheets = set()
+        self._workbook_dirty = False
+        self._loading_workbook_sheet = False
+        self._master_ref_cache_key = None
+        self._master_ref_cache = None
+        self._workbook_revision = 0
+        self._dashboard_request = 0
+        self._student_list_request = 0
+
+        self.setWindowTitle("SSM Student Profiling System")
+        logo_path = resource_path(LOGO_ASSET)
+        if os.path.exists(logo_path):
+            self.setWindowIcon(QIcon(logo_path))
+        self.resize(1100, 750)
+        self.setMinimumSize(980, 680)
+        
+        self.apply_modern_stylesheet()
+
+        self.status_bar = QStatusBar()
+        self.status_bar.setSizeGripEnabled(False)
+        self.setStatusBar(self.status_bar)
+
+        # Main Layout: Sidebar + Main Content
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QHBoxLayout(main_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 1. Left Sidebar
+        self.create_sidebar(main_layout)
+
+        # 2. Main Content Area
+        content_widget = QWidget()
+        content_widget.setObjectName("MainContent")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(28, 22, 28, 22)
+        content_layout.setSpacing(16)
+
+        # Header
+        header_layout = QVBoxLayout()
+        header_layout.setSpacing(2)
+        app_title = QLabel("SSM Student Profiling System")
+        app_title.setObjectName("HeaderTitle")
+        app_subtitle = QLabel("YWAM Balut Student Sponsorship Ministry")
+        app_subtitle.setObjectName("HeaderSubtitle")
+        header_layout.addWidget(app_title)
+        header_layout.addWidget(app_subtitle)
+        
+        content_layout.addLayout(header_layout)
+        
+        # Divider
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("border: none; background-color: #e8edf3; max-height: 1px;")
+        content_layout.addWidget(divider)
+
+        # Stacked Widget for Screens
+        self.stacked_widget = QStackedWidget()
+        content_layout.addWidget(self.stacked_widget)
+        
+        main_layout.addWidget(content_widget)
+
+        # Build Screens
+        self.create_dashboard_screen()  # Index 0
+        self.create_list_screen()       # Index 1
+        self.create_profile_screen()    # Index 2
+        self.create_add_screen()        # Index 3
+        self.create_expenses_screen()   # Index 4
+        self.create_workbook_screen()   # Index 5
+        self.create_coordinators_screen()  # Index 6
+        self._apply_button_cursors()
+        self._apply_card_shadows()
+
+        # Initialize Data
+        self.nav_dashboard()
+        self._start_keepalive()
+
+    def _run_background(self, function, on_success=None, on_error=None):
+        """Run blocking work in Qt's managed thread pool."""
+        task = BackgroundTask(function)
+        if on_success is not None:
+            task.signals.succeeded.connect(on_success)
+        if on_error is not None:
+            task.signals.failed.connect(on_error)
+        self.thread_pool.start(task)
+        return task
+
+    def _switch_page(self, index: int):
+        if not hasattr(self, "stacked_widget") or index < 0:
+            return
+        if index >= self.stacked_widget.count():
+            return
+        if self.stacked_widget.currentIndex() == index:
+            return
+
+        self.stacked_widget.setCurrentIndex(index)
+        page = self.stacked_widget.currentWidget()
+        if page is None:
+            return
+
+        effect = QGraphicsOpacityEffect(page)
+        page.setGraphicsEffect(effect)
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(170)
+        animation.setStartValue(0.88)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.finished.connect(lambda page=page: page.setGraphicsEffect(None))
+        self._page_transition = animation
+        animation.start()
+    def _apply_button_cursors(self):
+        for button in self.findChildren(QPushButton):
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+        for combo in self.findChildren(QComboBox):
+            combo.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def _apply_card_shadows(self):
+        """Give every Card widget a soft, low-key drop shadow for depth."""
+        for w in self.findChildren(QWidget):
+            if w.objectName() == "Card":
+                shadow = QGraphicsDropShadowEffect(w)
+                shadow.setBlurRadius(28)
+                shadow.setXOffset(0)
+                shadow.setYOffset(4)
+                shadow.setColor(QColor(16, 42, 67, 35))
+                w.setGraphicsEffect(shadow)
+
+    def apply_modern_stylesheet(self):
+        qss_path = resource_path(os.path.join("assets", "styles", "app.qss"))
+        try:
+            with open(qss_path, "r", encoding="utf-8") as file:
+                self.setStyleSheet(file.read())
+        except Exception as e:
+            print(f"Stylesheet load error: {e}")
+
+    # ── SIDEBAR NAVIGATION ────────────────────────────────────────────────────
+    def create_sidebar(self, layout):
+        self.sidebar = QWidget()
+        self.sidebar.setObjectName("Sidebar")
+        self.sidebar.setFixedWidth(230)
+        sidebar_layout = QVBoxLayout(self.sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 20)
+        sidebar_layout.setSpacing(6)
+
+        # Brand header
+        brand_container = QWidget()
+        brand_container.setStyleSheet("background-color: #0b63ce; color: white;")
+        brand_container.setFixedHeight(166)
+        brand_layout = QVBoxLayout(brand_container)
+        brand_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        logo_lbl = QLabel()
+        set_logo_pixmap(logo_lbl, 104, 78)
+        
+        self.brand_lbl = QLabel("Joshua")
+        self.brand_lbl.setStyleSheet("font-size: 20px; font-weight: 800; color: white; letter-spacing: 2px;")
+        self.brand_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        brand_sub = QLabel("SSM Portal")
+        brand_sub.setStyleSheet("font-size: 13px; color: #e3f2fd; font-weight: 600;")
+        brand_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        brand_layout.addWidget(logo_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
+        brand_layout.addWidget(self.brand_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
+        brand_layout.addWidget(brand_sub, alignment=Qt.AlignmentFlag.AlignHCenter)
+        
+        sidebar_layout.addWidget(brand_container)
+        sidebar_layout.addSpacing(15)
+
+        self.btn_dash = QPushButton("Dashboard")
+        self.btn_stud = QPushButton("Students")
+        self.btn_exp  = QPushButton("Expenses")
+        self.btn_coordinators = QPushButton("Coordinators")
+        self.btn_add  = QPushButton("Add Student")
+        self.btn_workbook = QPushButton("Workbook Tabs")
+
+        for btn in [self.btn_dash, self.btn_stud, self.btn_exp, self.btn_coordinators, self.btn_add, self.btn_workbook]:
+            btn.setProperty("class", "SidebarBtn")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setMinimumHeight(44)
+            sidebar_layout.addWidget(btn)
+
+        self.btn_dash.clicked.connect(self.nav_dashboard)
+        self.btn_stud.clicked.connect(self.nav_students)
+        self.btn_add.clicked.connect(self.nav_add)
+        self.btn_exp.clicked.connect(self.nav_expenses)
+        self.btn_workbook.clicked.connect(self.nav_workbook)
+        self.btn_coordinators.clicked.connect(self.nav_coordinators)
+
+        sidebar_layout.addStretch()
+
+        # User selector
+        user_label = QLabel("Logged in as")
+        user_label.setStyleSheet("color: #8a9bb0; font-size: 11px; padding-left: 12px;")
+        self.user_combo = QComboBox()
+        self.user_combo.addItems(USERS)
+        idx = self.user_combo.findText(self._initial_user)
+        if idx >= 0:
+            self.user_combo.setCurrentIndex(idx)
+        self.brand_lbl.setText(self._initial_user)
+        self.user_combo.setStyleSheet("margin: 0 10px;")
+        self.user_combo.currentTextChanged.connect(self._on_user_changed)
+        sidebar_layout.addWidget(user_label)
+        sidebar_layout.addWidget(self.user_combo)
+        sidebar_layout.addSpacing(6)
+
+        self.sidebar_refresh_btn = QPushButton("Refresh")
+        self.sidebar_refresh_btn.setObjectName("SidebarRefreshBtn")
+        self.sidebar_refresh_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self.sidebar_refresh_btn.setIconSize(QSize(15, 15))
+        self.sidebar_refresh_btn.setToolTip("Refresh data from Supabase")
+        self.sidebar_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sidebar_refresh_btn.setMinimumHeight(34)
+        self.sidebar_refresh_btn.setMaximumHeight(36)
+        self.sidebar_refresh_btn.clicked.connect(self._sidebar_refresh)
+        sidebar_layout.addWidget(self.sidebar_refresh_btn)
+
+        layout.addWidget(self.sidebar)
+
+    def nav_dashboard(self):
+        self._set_active_nav(self.btn_dash)
+        self.refresh_dashboard()
+        self._switch_page(0)
+
+    def nav_students(self):
+        self._set_active_nav(self.btn_stud)
+        self.refresh_grade_filter()
+        if self.student_list_mode:
+            self.load_student_list()
+        else:
+            self.show_student_view_prompt()
+        self._switch_page(1)
+
+    def nav_add(self):
+        self._set_active_nav(self.btn_add)
+        self._open_add_screen()
+
+    def nav_expenses(self):
+        if self.current_student_id:
+            self._set_active_nav(self.btn_exp)
+            self.open_expenses_screen()
+        else:
+            QMessageBox.information(self, "Select Student", "Please select a student from the Students list first to view expenses.")
+            self.nav_students()
+
+    def nav_workbook(self):
+        self._set_active_nav(self.btn_workbook)
+        self._switch_page(5)
+
+    def nav_coordinators(self):
+        self._set_active_nav(self.btn_coordinators)
+        self._switch_page(6)
+        self.load_coordinators()
+
+    def _on_user_changed(self, name):
+        self.brand_lbl.setText(name)
+        hour = time.localtime().tm_hour
+        greeting = "Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
+        self.greet_lbl.setText(f"{greeting}, {name}")
+
+    def _sidebar_refresh(self):
+        button = getattr(self, "sidebar_refresh_btn", None)
+        if button is not None:
+            button.setEnabled(False)
+            button.setText("Refreshing...")
+        self.status_bar.showMessage("Refreshing...", 1200)
+
+        idx = self.stacked_widget.currentIndex()
+        task = None
+        if idx == 0:
+            task = self.refresh_dashboard()
+        elif idx == 1:
+            task = self.load_student_list()
+        elif idx == 6:
+            self.load_coordinators()
+
+        if button is not None and task is not None:
+            task.signals.finished.connect(
+                lambda: (button.setEnabled(True), button.setText("Refresh"))
+            )
+        elif button is not None:
+            QTimer.singleShot(450, lambda: (button.setEnabled(True), button.setText("Refresh")))
+    def _set_active_nav(self, active_btn):
+        for btn in [self.btn_dash, self.btn_stud, self.btn_exp, self.btn_coordinators, self.btn_add, self.btn_workbook]:
+            btn.setChecked(btn is active_btn)
+
+    # ── KEEPALIVE ─────────────────────────────────────────────────────────────
+    def _start_keepalive(self):
+        self.keepalive_timer = QTimer(self)
+        self.keepalive_timer.setInterval(KEEPALIVE_INTERVAL_MS)
+        self.keepalive_timer.timeout.connect(self._do_keepalive)
+        self.keepalive_timer.start()
+        self.status_bar.showMessage("Connected to Supabase", 5000)
+
+    def _do_keepalive(self):
+        self._run_background(
+            self.student_repository.ping,
+            lambda _rows: self.status_bar.showMessage("Supabase keepalive OK", 4000),
+            lambda error: self.status_bar.showMessage(
+                f"Keepalive error: {error.strip().splitlines()[-1]}", 8000
+            ),
+        )
+
+    def _update_field(self, table: str, field: str, value, record_id):
+        try:
+            if table != "students":
+                raise ValueError(f"Unsupported table for field update: {table}")
+            self.student_repository.update_student(record_id, {field: value})
+            self.status_bar.showMessage(f"{field.replace('_', ' ').capitalize()} saved", 3000)
+        except Exception as e:
+            self.status_bar.showMessage(f"Error saving {field} ({type(e).__name__}): {e}", 8000)
+
+    # ── SCREEN 0: DASHBOARD ───────────────────────────────────────────────────
+    def create_dashboard_screen(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setSpacing(16)
+
+        # Greeting banner
+        import datetime
+        hour = datetime.datetime.now().hour
+        if hour < 12:   greeting = "Good morning"
+        elif hour < 17: greeting = "Good afternoon"
+        else:           greeting = "Good evening"
+
+        hello_card = QWidget()
+        hello_card.setObjectName("Card")
+        hello_card.setStyleSheet("QWidget#Card { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #1a237e, stop:1 #1976d2); border-radius: 12px; border: none; }")
+        h_layout = QVBoxLayout(hello_card)
+        h_layout.setContentsMargins(24, 18, 24, 18)
+        self.greet_lbl = QLabel(f"{greeting}, {self._initial_user}")
+        self.greet_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: white;")
+        sub_lbl   = QLabel("Today's overview for students, sponsors, and records.")
+        sub_lbl.setStyleSheet("font-size: 12px; color: rgba(255,255,255,0.80);")
+        h_layout.addWidget(self.greet_lbl)
+        h_layout.addWidget(sub_lbl)
+        layout.addWidget(hello_card)
+
+        overview_lbl = QLabel("Overview")
+        overview_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #333; margin-top: 4px;")
+        layout.addWidget(overview_lbl)
+
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(16)
+
+        self.lbl_total_val    = QLabel("--"); self.lbl_total_val.setObjectName("CardValue")
+        self.lbl_active_val   = QLabel("--"); self.lbl_active_val.setObjectName("CardValue")
+        self.lbl_inactive_val = QLabel("--"); self.lbl_inactive_val.setObjectName("CardValue")
+        self.lbl_graduated_val = QLabel("--"); self.lbl_graduated_val.setObjectName("CardValue")
+
+        cards_row.addWidget(self._build_card("Total Students",    self.lbl_total_val,    "#0b63ce"), 1)
+        cards_row.addWidget(self._build_card("Active Students",   self.lbl_active_val,   "#2f855a"), 1)
+        cards_row.addWidget(self._build_card("Inactive Students", self.lbl_inactive_val, "#d64545"), 1)
+        cards_row.addWidget(self._build_card("Graduated Students", self.lbl_graduated_val, "#6b46c1"), 1)
+
+        layout.addLayout(cards_row)
+
+        insights_row = QHBoxLayout()
+        insights_row.setSpacing(16)
+        self.dashboard_area_list = QListWidget()
+        self.dashboard_sponsor_list = QListWidget()
+        self.dashboard_attention_list = QListWidget()
+        self.dashboard_attention_list.itemClicked.connect(self.on_student_click)
+        insights_row.addWidget(self._build_dashboard_list_card("Students by Area", self.dashboard_area_list), 1)
+        insights_row.addWidget(self._build_dashboard_list_card("Sponsor Summary", self.dashboard_sponsor_list), 1)
+        insights_row.addWidget(self._build_dashboard_list_card("Needs Attention", self.dashboard_attention_list), 1)
+        layout.addLayout(insights_row, 1)
+        self.stacked_widget.addWidget(widget)
+
+    def _build_card(self, title_text, value_label, accent_color="#0b63ce"):
+        card = QWidget()
+        card.setObjectName("Card")
+        card.setFixedHeight(118)
+        card.setStyleSheet(f"QWidget#Card {{ border-left: 4px solid {accent_color}; }}")
+        l = QVBoxLayout(card)
+        l.setContentsMargins(22, 18, 22, 18)
+        l.setSpacing(6)
+        t = QLabel(title_text)
+        t.setObjectName("CardTitle")
+        l.addWidget(t)
+        l.addWidget(value_label)
+        return card
+
+    def _build_dashboard_list_card(self, title_text, list_widget):
+        card = QWidget()
+        card.setObjectName("Card")
+        card.setMinimumHeight(260)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+
+        title = QLabel(title_text)
+        title.setObjectName("CardTitle")
+        list_widget.setFrameShape(QFrame.Shape.NoFrame)
+        list_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        list_widget.setMinimumHeight(210)
+
+        layout.addWidget(title)
+        layout.addWidget(list_widget, 1)
+        return card
+
+    def refresh_dashboard(self):
+        """Fetch dashboard data without blocking Qt's event loop."""
+        self._dashboard_request += 1
+        request_id = self._dashboard_request
+        for label in (self.lbl_total_val, self.lbl_active_val, self.lbl_inactive_val, self.lbl_graduated_val):
+            label.setText("...")
+
+        def fetch_rows():
+            return self.student_repository.list_students(columns=(
+                "id,last_name,first_name,status,sponsor,area,grade,contact,school,birthday,photo_url"
+            ))
+
+        def apply_rows(raw_rows):
+            if request_id != self._dashboard_request:
+                return
+            rows = self._filter_current_master_rows(raw_rows)
+            counts = self.dashboard_service.summary_counts(rows)
+            self.lbl_total_val.setText(str(counts["total"]))
+            self.lbl_active_val.setText(str(counts["active"]))
+            self.lbl_inactive_val.setText(str(counts["inactive"]))
+            self.lbl_graduated_val.setText(str(counts["graduated"]))
+            self._refresh_dashboard_lists(rows)
+
+        def show_error(error):
+            if request_id != self._dashboard_request:
+                return
+            err = error.strip().splitlines()[-1][:40]
+            self.lbl_total_val.setText("ERR")
+            self.lbl_active_val.setText(err)
+            self.lbl_inactive_val.setText("")
+            self.lbl_graduated_val.setText("")
+            logging.getLogger(__name__).error("Dashboard refresh failed:\n%s", error)
+
+        return self._run_background(fetch_rows, apply_rows, show_error)
+    def _filter_current_master_rows(self, rows):
+        return self.masterlist_service.filter_current_rows(
+            rows,
+            self._current_master_student_reference(),
+        )
+
+    def _apply_current_master_status(self, row):
+        return self.masterlist_service.apply_current_status(
+            row,
+            self._current_master_student_reference(),
+        )
+
+    def _current_master_student_keys(self):
+        return self.masterlist_service.current_student_keys(
+            self._current_master_student_reference(),
+        )
+
+    def _current_master_student_reference(self):
+        try:
+            return self.masterlist_service.current_student_reference(
+                workbook=self._workbook,
+                workbook_path=self._workbook_path,
+                workbook_revision=self._workbook_revision,
+                saved_workbook_path=self._settings().value("workbook_path", "", type=str),
+                cwd=os.getcwd(),
+                fallback_paths=[r"F:\SSM Masterlist.xlsx"],
+            )
+        except Exception as e:
+            print(f"Masterlist reference error: {e}")
+            return {}
+
+    def _invalidate_master_reference_cache(self):
+        self._master_ref_cache_key = None
+        self._master_ref_cache = None
+        self.masterlist_service.invalidate_cache()
+
+    def _current_masterlist_path(self):
+        return self.masterlist_service.current_masterlist_path(
+            workbook_path=self._workbook_path,
+            saved_workbook_path=self._settings().value("workbook_path", "", type=str),
+            cwd=os.getcwd(),
+            fallback_paths=[r"F:\SSM Masterlist.xlsx"],
+        )
+
+    def _latest_master_sheet_name_from_names(self, sheet_names):
+        return self.masterlist_service.latest_master_sheet_name_from_names(sheet_names)
+
+    def _master_sheet_student_keys(self, worksheet):
+        return self.masterlist_service.master_sheet_student_keys(worksheet)
+
+    def _master_sheet_student_reference(self, worksheet):
+        return self.masterlist_service.master_sheet_student_reference(worksheet)
+
+    def _student_reference_key(self, row):
+        return self.masterlist_service.student_reference_key(row)
+
+    def _normalize_student_key_value(self, value):
+        return self.masterlist_service.normalize_student_key_value(value)
+    def _status_style(self, status):
+        return self.student_service.status_style(status)
+
+    def _profile_completion_percent(self, student):
+        return self.student_service.profile_completion_percent(student)
+
+    def _dedupe_dashboard_students(self, rows):
+        return self.dashboard_service.dedupe_students(rows)
+
+    def _dashboard_student_key(self, row):
+        return self.dashboard_service.student_key(row)
+
+    def _dashboard_row_score(self, row):
+        return self.dashboard_service.row_score(row)
+
+    def _refresh_dashboard_lists(self, rows):
+        dashboard = self.dashboard_service.build_lists(rows)
+
+        self.dashboard_area_list.clear()
+        for area, count in dashboard["area_counts"]:
+            item = QListWidgetItem(f"{area}  -  {count}")
+            item.setToolTip(f"{count} students in {area}")
+            self.dashboard_area_list.addItem(item)
+
+        self.dashboard_sponsor_list.clear()
+        for sponsor, count in dashboard["sponsor_counts"]:
+            item = QListWidgetItem(f"{sponsor}  -  {count}")
+            item.setToolTip(f"{count} students for {sponsor}")
+            self.dashboard_sponsor_list.addItem(item)
+
+        self.dashboard_attention_list.clear()
+        attention = dashboard["attention"]
+        for entry in attention:
+            item = QListWidgetItem(f"{entry['name']}    Missing: {entry['missing_text']}")
+            item.setData(Qt.ItemDataRole.UserRole, entry["student_id"])
+            item.setToolTip("Open student profile")
+            self.dashboard_attention_list.addItem(item)
+        if not attention:
+            item = QListWidgetItem("All visible records look complete.")
+            item.setData(Qt.ItemDataRole.UserRole, None)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            item.setForeground(QColor("#627d98"))
+            self.dashboard_attention_list.addItem(item)
+    # ── SCREEN 1: LIST ────────────────────────────────────────────────────────
+    def create_list_screen(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # Filters Card
+        filter_card = QWidget()
+        filter_card.setObjectName("Card")
+        f_layout = QVBoxLayout(filter_card)
+        f_layout.setContentsMargins(16, 14, 16, 14)
+        f_layout.setSpacing(10)
+        
+        mode_bar = QHBoxLayout()
+        mode_bar.setSpacing(8)
+        self.btn_all_students = QPushButton("All Students")
+        self.btn_all_students.setCheckable(True)
+        self.btn_areas = QPushButton("Areas")
+        self.btn_areas.setCheckable(True)
+        self.btn_all_students.setObjectName("SecondaryBtn")
+        self.btn_areas.setObjectName("SecondaryBtn")
+        self.btn_all_students.clicked.connect(lambda: self.set_student_list_mode("all"))
+        self.btn_areas.clicked.connect(lambda: self.set_student_list_mode("areas"))
+        mode_bar.addWidget(self.btn_all_students)
+        mode_bar.addWidget(self.btn_areas)
+        mode_bar.addStretch()
+        f_layout.addLayout(mode_bar)
+
+        search_row = QHBoxLayout()
+        search_row.setSpacing(10)
+        self.search_name    = QLineEdit(); self.search_name.setPlaceholderText("Search name")
+        self.search_name.setMinimumWidth(180)
+        self.search_name.textChanged.connect(self.load_student_list)
+        self.search_sponsor = QLineEdit(); self.search_sponsor.setPlaceholderText("Filter sponsor")
+        self.search_sponsor.setMinimumWidth(180)
+        self.search_sponsor.textChanged.connect(self.load_student_list)
+        search_row.addWidget(self.search_name, 1)
+        search_row.addWidget(self.search_sponsor, 1)
+        f_layout.addLayout(search_row)
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(10)
+        self.filter_grade = QComboBox()
+        self.filter_grade.addItem("All Grades")
+        self.filter_grade.currentTextChanged.connect(self.load_student_list)
+        self.filter_grade.setMinimumWidth(120)
+        self.area_select = QComboBox()
+        self.area_select.addItem("Choose Area")
+        self.area_select.setMinimumWidth(150)
+        self.area_select.currentTextChanged.connect(self.load_student_list)
+        self.area_select.setVisible(False)
+        self.back_to_areas_btn = QPushButton("Back to Areas")
+        self.back_to_areas_btn.setObjectName("SecondaryBtn")
+        self.back_to_areas_btn.clicked.connect(self.back_to_area_choices)
+        self.back_to_areas_btn.setVisible(False)
+        self.filter_status  = QComboBox()
+        self.filter_status.addItems(["All", "Active", "Inactive/Removed", "Graduated"])
+        self.filter_status.setMinimumWidth(165)
+        self.filter_status.currentTextChanged.connect(self.load_student_list)
+
+        import_btn = QPushButton("Import Excel");  import_btn.setObjectName("SecondaryBtn")
+        import_btn.clicked.connect(self.import_from_excel)
+        export_btn = QPushButton("Export Excel");  export_btn.setObjectName("SecondaryBtn")
+        export_btn.clicked.connect(self.export_to_excel)
+        refresh_btn= QPushButton("Refresh");       refresh_btn.setObjectName("SecondaryBtn")
+        refresh_btn.clicked.connect(self.load_student_list)
+        clear_btn = QPushButton("Clear Filters"); clear_btn.setObjectName("SecondaryBtn")
+        clear_btn.clicked.connect(self.clear_student_filters)
+
+        filter_row.addWidget(QLabel("Grade:"))
+        filter_row.addWidget(self.filter_grade)
+        filter_row.addWidget(self.area_select)
+        filter_row.addWidget(self.back_to_areas_btn)
+        filter_row.addWidget(QLabel("Status:"))
+        filter_row.addWidget(self.filter_status)
+        filter_row.addStretch()
+        filter_row.addWidget(clear_btn)
+        filter_row.addWidget(import_btn)
+        filter_row.addWidget(export_btn)
+        filter_row.addWidget(refresh_btn)
+        f_layout.addLayout(filter_row)
+        
+        layout.addWidget(filter_card)
+
+        self.count_label = QLabel("Choose All Students or Areas to view records.")
+        self.count_label.setMinimumHeight(42)
+        self.count_label.setStyleSheet("""
+            QLabel {
+                background: #ffffff;
+                border: 1px solid #d9e2ec;
+                border-radius: 8px;
+                padding: 10px 14px;
+                font-size: 14px;
+                font-weight: 800;
+                color: #102a43;
+            }
+        """)
+        layout.addWidget(self.count_label)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setObjectName("StudentList")
+        self.list_widget.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.list_widget.itemClicked.connect(self.on_student_click)
+        self.list_widget.itemActivated.connect(self.on_student_click)
+        layout.addWidget(self.list_widget)
+
+        self.student_list_mode = None
+        self._student_list_rows = []
+        self._area_options = []
+        self._area_counts = {}
+        self.show_student_view_prompt()
+        
+        self.stacked_widget.addWidget(widget)
+
+    # ── SCREEN 2: PROFILE ─────────────────────────────────────────────────────
+    def create_profile_screen(self):
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(14)
+
+        top_bar = QHBoxLayout()
+        back_btn = QPushButton("Back"); back_btn.setObjectName("SecondaryBtn")
+        back_btn.clicked.connect(self.nav_students)
+        self.edit_btn = QPushButton("Edit"); self.edit_btn.clicked.connect(self.open_edit_screen)
+        self.deactivate_btn = QPushButton("Mark Inactive"); self.deactivate_btn.setObjectName("DangerBtn")
+        self.deactivate_btn.clicked.connect(self.toggle_active_status)
+        
+        top_bar.addWidget(back_btn); top_bar.addStretch()
+        top_bar.addWidget(self.edit_btn); top_bar.addWidget(self.deactivate_btn)
+        outer.addLayout(top_bar)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        content = QWidget(); content.setObjectName("Card")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(28, 26, 28, 26)
+        layout.setSpacing(20)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(22)
+        
+        # Left side: Photo
+        pcol = QVBoxLayout()
+        pcol.setSpacing(10)
+        pcol.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.photo_label = QLabel("No Photo")
+        self.photo_label.setFixedSize(140, 170)
+        self.photo_label.setObjectName("PhotoFrame")
+        self.photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.change_photo_btn = QPushButton("Change Photo"); self.change_photo_btn.setObjectName("SecondaryBtn")
+        self.change_photo_btn.clicked.connect(self.change_photo)
+        self.change_photo_btn.setFixedWidth(160)
+        self.remove_photo_btn = QPushButton("Remove Photo"); self.remove_photo_btn.setObjectName("DangerBtn")
+        self.remove_photo_btn.clicked.connect(self.remove_photo)
+        self.remove_photo_btn.setFixedWidth(160)
+        self.remove_photo_btn.setVisible(False)
+        pcol.addWidget(self.photo_label)
+        pcol.addWidget(self.change_photo_btn)
+        pcol.addWidget(self.remove_photo_btn)
+        top_row.addLayout(pcol)
+        
+        # Middle: Info (native QGridLayout)
+        info_layout = QVBoxLayout()
+        info_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        info_layout.setSpacing(14)
+        
+        # Header Row: Name & Status
+        self.lbl_profile_name = QLabel("Student Name")
+        self.lbl_profile_name.setStyleSheet("font-size: 28px; font-weight: 800; color: #102a43;")
+        self.lbl_profile_name.setWordWrap(True)
+        self.lbl_profile_status = QLabel("Active")
+        self.lbl_profile_status.setMinimumHeight(28)
+        self.lbl_profile_status.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_profile_status.setStyleSheet("font-size: 15px; font-weight: 700;")
+        
+        info_layout.addWidget(self.lbl_profile_name)
+        info_layout.addWidget(self.lbl_profile_status)
+
+        # Data Grid Layout — one field per row, value column takes all
+        # remaining width. A single column avoids two text blocks ever
+        # competing for width on the same row, so this never forces a
+        # horizontal scrollbar, no matter how the window is resized.
+        self.profile_grid = QGridLayout()
+        self.profile_grid.setHorizontalSpacing(22)
+        self.profile_grid.setVerticalSpacing(13)
+        self.profile_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.profile_grid.setColumnMinimumWidth(0, 110)  # Label column
+        self.profile_grid.setColumnStretch(1, 1)          # Value column fills the rest
+
+        # Dictionary to store our dynamic value labels for easy updating
+        self.profile_data_labels = {}
+
+        # Helper function to create a uniform row in the grid
+        def add_grid_item(row, label_text, key):
+            title_lbl = QLabel(label_text)
+            title_lbl.setObjectName("FieldLabel")
+            val_lbl = QLabel("--")
+            val_lbl.setObjectName("FieldValue")
+            val_lbl.setWordWrap(True)
+            self.profile_grid.addWidget(title_lbl, row, 0, Qt.AlignmentFlag.AlignTop)
+            self.profile_grid.addWidget(val_lbl, row, 1)
+            self.profile_data_labels[key] = val_lbl
+
+        # Grid Population
+        add_grid_item(0, "Gender:", "gender")
+        add_grid_item(1, "Grade/Level:", "grade")
+        add_grid_item(2, "Area:", "area")
+        add_grid_item(3, "City:", "city")
+        add_grid_item(4, "Address:", "address")
+        add_grid_item(5, "Birthday:", "birthday")
+        add_grid_item(6, "Contact:", "contact")
+        add_grid_item(7, "Sponsor:", "sponsor")
+        self.profile_data_labels["sponsor"].setStyleSheet("color: #102a43; font-size: 16px; font-weight: 800;")
+        
+        add_grid_item(8, "School:", "school")
+        add_grid_item(9, "Parents:", "parents")
+        add_grid_item(10, "Course:", "course")
+
+        info_layout.addLayout(self.profile_grid)
+        top_row.addLayout(info_layout, 3)
+
+        # Right side: Progress
+        progress_layout = QVBoxLayout()
+        progress_layout.setSpacing(8)
+        progress_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.profile_progress = CircularProgress()
+        progress_lbl = QLabel("Profile\nCompletion")
+        progress_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        progress_lbl.setStyleSheet("font-size: 12px; color: #627d98; font-weight: 700;")
+        progress_layout.addWidget(self.profile_progress, alignment=Qt.AlignmentFlag.AlignCenter)
+        progress_layout.addWidget(progress_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
+        top_row.addLayout(progress_layout)
+        
+        layout.addLayout(top_row)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("color: #e8edf3; background-color: #e8edf3; max-height: 1px;")
+        layout.addWidget(divider)
+
+        # Remarks (grows to fill any leftover space instead of leaving a dead gap)
+        remarks_lbl = QLabel("Remarks")
+        remarks_lbl.setStyleSheet("font-size: 14px; font-weight: 800; color: #102a43;")
+        layout.addWidget(remarks_lbl)
+        self.remarks_edit = QTextEdit()
+        self.remarks_edit.setMinimumHeight(120)
+        layout.addWidget(self.remarks_edit, 1)
+
+        btn_row = QHBoxLayout()
+        save_btn = QPushButton("Save Remarks"); save_btn.clicked.connect(self.save_remarks)
+        exp_btn  = QPushButton("View / Add Expenses")
+        exp_btn.setObjectName("WarningBtn")
+        exp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        exp_btn.setMinimumHeight(42); exp_btn.clicked.connect(self.nav_expenses)
+        btn_row.addWidget(save_btn); btn_row.addStretch(); btn_row.addWidget(exp_btn)
+        layout.addLayout(btn_row)
+
+        scroll.setWidget(content); outer.addWidget(scroll)
+        self.stacked_widget.addWidget(widget)
+
+    # ── SCREEN 3: ADD / EDIT ──────────────────────────────────────────────────
+    def create_add_screen(self):
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+
+        top_bar = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel"); cancel_btn.setObjectName("SecondaryBtn")
+        cancel_btn.clicked.connect(self.nav_students)
+        self.form_title_label = QLabel("Add New Student")
+        self.form_title_label.setStyleSheet("font-size:18px; font-weight:bold; color: #1976d2;")
+        top_bar.addWidget(cancel_btn); top_bar.addWidget(self.form_title_label); top_bar.addStretch()
+        outer.addLayout(top_bar)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        content = QWidget(); content.setObjectName("Card")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        photo_row = QHBoxLayout()
+        self.add_photo_label = QLabel("No Photo")
+        self.add_photo_label.setFixedSize(100, 120)
+        self.add_photo_label.setObjectName("PhotoFrame")
+        self.add_photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pick_btn = QPushButton("Pick Photo"); pick_btn.setObjectName("SecondaryBtn")
+        pick_btn.clicked.connect(self.pick_add_photo)
+        photo_row.addWidget(self.add_photo_label); photo_row.addWidget(pick_btn); photo_row.addStretch()
+        layout.addLayout(photo_row)
+
+        form = QFormLayout()
+        form.setSpacing(14)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+        self.inp_last    = QLineEdit()
+        self.inp_first   = QLineEdit()
+        self.inp_gender  = QComboBox(); self.inp_gender.addItems(["F", "M", ""])
+        self.inp_grade   = QLineEdit()
+        self.inp_address = QLineEdit()
+        self.inp_city    = QLineEdit()
+        self.inp_area    = QLineEdit()
+        self.inp_bday    = QLineEdit(); self.inp_bday.setPlaceholderText("YYYY-MM-DD")
+        self.inp_sponsor = QLineEdit(); self.inp_sponsor.setPlaceholderText("e.g. Schnurbein, Word of Life...")
+        self.inp_contact = QLineEdit()
+        self.inp_school  = QLineEdit()
+        self.inp_parents = QLineEdit()
+        self.inp_course  = QLineEdit()
+        self.inp_remarks = QTextEdit(); self.inp_remarks.setFixedHeight(70)
+        self.inp_status  = QComboBox(); self.inp_status.addItems(["Active", "Inactive/Removed", "Graduated"])
+
+        # Cap field widths so they stay readable instead of stretching
+        # edge-to-edge on wide windows.
+        for fld in [self.inp_last, self.inp_first, self.inp_gender, self.inp_grade,
+                    self.inp_address, self.inp_city, self.inp_area, self.inp_bday,
+                    self.inp_sponsor, self.inp_contact, self.inp_school,
+                    self.inp_parents, self.inp_course, self.inp_remarks, self.inp_status]:
+            fld.setMaximumWidth(460)
+
+        form.addRow("Last Name *:",          self.inp_last)
+        form.addRow("First Name *:",         self.inp_first)
+        form.addRow("Gender:",               self.inp_gender)
+        form.addRow("Grade/Level:",          self.inp_grade)
+        form.addRow("Address:",              self.inp_address)
+        form.addRow("City:",                 self.inp_city)
+        form.addRow("Area/Coordinator:",     self.inp_area)
+        form.addRow("Birthday:",             self.inp_bday)
+        form.addRow("Sponsor:",              self.inp_sponsor)
+        form.addRow("Contact No.:",          self.inp_contact)
+        form.addRow("School:",               self.inp_school)
+        form.addRow("Parents & Occupation:", self.inp_parents)
+        form.addRow("Course:",               self.inp_course)
+        form.addRow("Remarks:",              self.inp_remarks)
+        form.addRow("Status:",               self.inp_status)
+        layout.addLayout(form)
+
+        self.save_form_btn = QPushButton("Save Student")
+        self.save_form_btn.clicked.connect(self.save_student_form)
+        layout.addWidget(self.save_form_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+        scroll.setWidget(content); outer.addWidget(scroll)
+        self.stacked_widget.addWidget(widget)
+
+    # ── SCREEN 4: EXPENSES ────────────────────────────────────────────────────
+    def create_expenses_screen(self):
+        widget = QWidget()
+        widget.setObjectName("MainContent")
+        outer_scroll = QScrollArea()
+        outer_scroll.setWidgetResizable(True)
+        inner = QWidget()
+        inner.setObjectName("MainContent")
+        layout = QVBoxLayout(inner)
+        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Top bar
+        top_bar = QHBoxLayout()
+        back_btn = QPushButton("Back"); back_btn.setObjectName("SecondaryBtn")
+        back_btn.clicked.connect(lambda: self._switch_page(2))
+        self.expenses_title = QLabel()
+        self.expenses_title.setStyleSheet("font-size:18px; font-weight:bold; color: #1976d2;")
+        top_bar.addWidget(back_btn); top_bar.addWidget(self.expenses_title); top_bar.addStretch()
+        layout.addLayout(top_bar)
+
+        # School year selector
+        sy_card = QWidget(); sy_card.setObjectName("Card")
+        sy_layout = QHBoxLayout(sy_card)
+        sy_layout.setContentsMargins(16, 10, 16, 10)
+        sy_lbl = QLabel("School Year:")
+        sy_lbl.setStyleSheet("font-size:13px; font-weight:bold;")
+        self.exp_school_year = QComboBox()
+        import datetime
+        sy_list = [f"{y}-{y+1}" for y in range(2020, 2032)]
+        self.exp_school_year.addItems(["All Years"] + sy_list)
+        cy = datetime.date.today().year
+        cm = datetime.date.today().month
+        cur_sy = f"{cy}-{cy+1}" if cm >= 6 else f"{cy-1}-{cy}"
+        idx = self.exp_school_year.findText(cur_sy)
+        if idx >= 0: self.exp_school_year.setCurrentIndex(idx)
+        self.exp_school_year.currentTextChanged.connect(self._on_sy_changed)
+        self.exp_school_year.setMinimumWidth(150)
+        sy_layout.addWidget(sy_lbl)
+        sy_layout.addWidget(self.exp_school_year)
+        sy_layout.addStretch()
+        layout.addWidget(sy_card)
+
+        # ── Budget card ────────────────────────────────────────────────────
+        budget_card = QWidget(); budget_card.setObjectName("Card")
+        budget_main = QVBoxLayout(budget_card)
+        budget_main.setContentsMargins(20, 14, 20, 14)
+        budget_main.setSpacing(8)
+
+        budget_hdr = QHBoxLayout()
+        budget_icon_lbl = QLabel("Budget Allocated")
+        budget_icon_lbl.setStyleSheet("font-size:14px; font-weight:bold; color:#333;")
+        budget_hdr.addWidget(budget_icon_lbl)
+        budget_hdr.addStretch()
+
+        # Edit budget row
+        self.budget_input = QLineEdit()
+        self.budget_input.setPlaceholderText("Enter budget e.g. 5000")
+        self.budget_input.setMaximumWidth(200)
+        self.budget_input.setMinimumHeight(34)
+        save_budget_btn = QPushButton("Save Budget")
+        save_budget_btn.setMinimumHeight(34)
+        save_budget_btn.setMaximumWidth(130)
+        save_budget_btn.clicked.connect(self.save_budget)
+        budget_hdr.addWidget(self.budget_input)
+        budget_hdr.addWidget(save_budget_btn)
+        budget_main.addLayout(budget_hdr)
+
+        # Progress bar row
+        self.budget_bar = QProgressBar()
+        self.budget_bar.setRange(0, 100)
+        self.budget_bar.setValue(0)
+        self.budget_bar.setTextVisible(False)
+        self.budget_bar.setFixedHeight(18)
+        self.budget_bar.setStyleSheet("""
+            QProgressBar { border: none; border-radius: 9px; background: #e0e0e0; }
+            QProgressBar::chunk { border-radius: 9px; background: #43a047; }
+        """)
+        budget_main.addWidget(self.budget_bar)
+
+        self.budget_status_lbl = QLabel("No budget set for this school year.")
+        self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+        budget_main.addWidget(self.budget_status_lbl)
+        layout.addWidget(budget_card)
+
+        # Add expense card
+        add_card = QWidget(); add_card.setObjectName("Card")
+        add_layout = QVBoxLayout(add_card)
+        add_layout.setContentsMargins(16, 12, 16, 12)
+        add_hdr = QLabel("Add New Expense")
+        add_hdr.setStyleSheet("font-size:13px; font-weight:bold; color:#555; margin-bottom:4px;")
+        add_layout.addWidget(add_hdr)
+
+        add_grid = QGridLayout()
+        add_grid.setHorizontalSpacing(8)
+        add_grid.setVerticalSpacing(8)
+        self.exp_desc = QLineEdit(); self.exp_desc.setPlaceholderText("Description")
+        self.exp_desc.setMinimumHeight(36)
+        self.exp_amount = QLineEdit(); self.exp_amount.setPlaceholderText("Amount e.g. 250.00")
+        self.exp_amount.setMinimumHeight(36)
+        self.exp_date = QDateEdit()
+        self.exp_date.setCalendarPopup(True)
+        self.exp_date.setDisplayFormat("yyyy-MM-dd")
+        self.exp_date.setDate(QDate.currentDate())
+        self.exp_date.setMinimumHeight(36)
+        self.exp_date.setMinimumWidth(170)
+        self.exp_date.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.exp_date.setToolTip("Click the blue date button to pick a date.")
+        self.exp_sy_entry = QComboBox()
+        self.exp_sy_entry.addItems(sy_list)
+        if idx >= 1: self.exp_sy_entry.setCurrentIndex(idx - 1)
+        self.exp_sy_entry.setMinimumHeight(36)
+        add_exp_btn = QPushButton("Add Expense")
+        add_exp_btn.setMinimumHeight(36)
+        add_exp_btn.clicked.connect(self.add_expense)
+        add_grid.addWidget(self.exp_desc, 0, 0, 1, 2)
+        add_grid.addWidget(self.exp_amount, 0, 2)
+        add_grid.addWidget(self.exp_date, 1, 0)
+        add_grid.addWidget(self.exp_sy_entry, 1, 1)
+        add_grid.addWidget(add_exp_btn, 1, 2)
+        add_grid.setColumnStretch(0, 2)
+        add_grid.setColumnStretch(1, 1)
+        add_grid.setColumnStretch(2, 1)
+        add_layout.addLayout(add_grid)
+        layout.addWidget(add_card)
+
+        # Expenses table
+        table_card = QWidget(); table_card.setObjectName("Card")
+        table_layout = QVBoxLayout(table_card)
+        table_layout.setContentsMargins(16, 12, 16, 12)
+        self.expenses_table = QTableWidget(0, 5)
+        self.expenses_table.setHorizontalHeaderLabels(["Description", "Amount (PHP)", "Date", "School Year", ""])
+        self.expenses_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.expenses_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.expenses_table.horizontalHeader().setStretchLastSection(False)
+        self.expenses_table.verticalHeader().setVisible(False)
+        self.expenses_table.setAlternatingRowColors(True)
+        self.expenses_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.expenses_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.expenses_table.setMinimumHeight(260)
+        self.expenses_table.verticalHeader().setDefaultSectionSize(36)
+        table_layout.addWidget(self.expenses_table)
+
+        self.total_label = QLabel("Total: PHP 0.00")
+        self.total_label.setStyleSheet("font-size:16px; font-weight:bold; color:#333; margin-top:6px;")
+        table_layout.addWidget(self.total_label, alignment=Qt.AlignmentFlag.AlignRight)
+        layout.addWidget(table_card)
+
+        layout.addStretch()
+        outer_scroll.setWidget(inner)
+        w_layout = QVBoxLayout(widget)
+        w_layout.setContentsMargins(0, 0, 0, 0)
+        w_layout.addWidget(outer_scroll)
+        self.stacked_widget.addWidget(widget)
+
+    def create_coordinators_screen(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(14)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # Header bar
+        top_bar = QHBoxLayout()
+        title = QLabel("Coordinators")
+        title.setObjectName("SectionTitle")
+        self.coord_search = QLineEdit()
+        self.coord_search.setPlaceholderText("Search by name, location, email…")
+        self.coord_search.setFixedWidth(280)
+        self.coord_search.textChanged.connect(self._filter_coordinators)
+        add_coord_btn = QPushButton("Add Coordinator")
+        add_coord_btn.clicked.connect(self._add_coordinator_dialog)
+        refresh_coord_btn = QPushButton("Refresh")
+        refresh_coord_btn.setObjectName("SecondaryBtn")
+        refresh_coord_btn.clicked.connect(self.load_coordinators)
+        top_bar.addWidget(title)
+        top_bar.addStretch()
+        top_bar.addWidget(self.coord_search)
+        top_bar.addWidget(add_coord_btn)
+        top_bar.addWidget(refresh_coord_btn)
+        layout.addLayout(top_bar)
+
+        # Table
+        self.coord_table = QTableWidget()
+        self.coord_table.setObjectName("CoordTable")
+        self.coord_table.setColumnCount(6)
+        self.coord_table.setHorizontalHeaderLabels(["Location", "Contact Person", "Email", "Contact No.", "FB Page", "Remarks"])
+        self.coord_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.coord_table.horizontalHeader().setStretchLastSection(True)
+        self.coord_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.coord_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.coord_table.setAlternatingRowColors(True)
+        self.coord_table.verticalHeader().setVisible(False)
+        self.coord_table.setWordWrap(True)
+        self.coord_table.verticalHeader().setDefaultSectionSize(48)
+        self.coord_table.setColumnWidth(0, 130)
+        self.coord_table.setColumnWidth(1, 180)
+        self.coord_table.setColumnWidth(2, 230)
+        self.coord_table.setColumnWidth(3, 130)
+        self.coord_table.setColumnWidth(4, 160)
+        self.coord_table.doubleClicked.connect(self._edit_coordinator_dialog)
+        layout.addWidget(self.coord_table, 1)
+
+        self.coord_status = QLabel("")
+        self.coord_status.setStyleSheet("color:#627d98; font-size:12px;")
+        layout.addWidget(self.coord_status)
+
+        self._coord_all_rows = []  # cache for filtering
+        self.stacked_widget.addWidget(widget)
+
+    def load_coordinators(self):
+        try:
+            data = self.coordinator_repository.list_coordinators()
+            self._coord_all_rows = data
+            self._populate_coord_table(data)
+        except Exception as e:
+            self.coord_status.setText(f"Could not load coordinators: {e}")
+
+    def _populate_coord_table(self, rows):
+        self.coord_table.setRowCount(0)
+        for r in rows:
+            row_idx = self.coord_table.rowCount()
+            self.coord_table.insertRow(row_idx)
+            for col, key in enumerate(["location", "contact_person", "email", "contact_no", "fb_page", "remarks"]):
+                val = r.get(key) or ""
+                item = QTableWidgetItem(val)
+                item.setData(Qt.ItemDataRole.UserRole, r.get("id"))
+                self.coord_table.setItem(row_idx, col, item)
+        self.coord_status.setText(f"{len(rows)} coordinator(s)")
+
+    def _filter_coordinators(self, text):
+        q = text.strip().lower()
+        if not q:
+            self._populate_coord_table(self._coord_all_rows)
+            return
+        filtered = [
+            r for r in self._coord_all_rows
+            if any(q in str(r.get(k) or "").lower()
+                   for k in ["location", "contact_person", "email", "contact_no", "fb_page", "remarks"])
+        ]
+        self._populate_coord_table(filtered)
+
+    def _coord_row_data(self, row_idx):
+        keys = ["location", "contact_person", "email", "contact_no", "fb_page", "remarks"]
+        d = {}
+        for col, key in enumerate(keys):
+            item = self.coord_table.item(row_idx, col)
+            d[key] = item.text() if item else ""
+            if col == 0:
+                d["_id"] = item.data(Qt.ItemDataRole.UserRole) if item else None
+        return d
+
+    def _coord_dialog(self, title, prefill=None):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(420)
+        form = QFormLayout(dlg)
+        form.setSpacing(10)
+        form.setContentsMargins(20, 20, 20, 20)
+        fields = {}
+        for label, key in [("Location", "location"), ("Contact Person", "contact_person"),
+                            ("Email", "email"), ("Contact No.", "contact_no"),
+                            ("FB Page", "fb_page"), ("Remarks", "remarks")]:
+            w = QLineEdit()
+            if prefill:
+                w.setText(prefill.get(key, ""))
+            form.addRow(label, w)
+            fields[key] = w
+        btn_row = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("SecondaryBtn")
+        save_btn.clicked.connect(dlg.accept)
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addStretch(); btn_row.addWidget(cancel_btn); btn_row.addWidget(save_btn)
+        form.addRow(btn_row)
+        return dlg, fields
+
+    def _add_coordinator_dialog(self):
+        dlg, fields = self._coord_dialog("Add Coordinator")
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        record = {k: v.text().strip() for k, v in fields.items()}
+        if not record["location"] and not record["contact_person"]:
+            return
+        try:
+            self.coordinator_repository.insert_coordinator(record)
+            self.load_coordinators()
+            self.status_bar.showMessage("Coordinator added", 4000)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def _edit_coordinator_dialog(self, index):
+        row = index.row()
+        prefill = self._coord_row_data(row)
+        rec_id = prefill.pop("_id", None)
+        dlg, fields = self._coord_dialog("Edit Coordinator", prefill)
+        # Add delete button
+        del_btn = QPushButton("Delete")
+        del_btn.setObjectName("DangerBtn")
+        del_btn.clicked.connect(lambda: dlg.done(2))
+        form = dlg.layout()
+        last_row = form.rowCount() - 1
+        btn_row_item = form.itemAt(last_row, QFormLayout.ItemRole.FieldRole)
+        if btn_row_item and btn_row_item.layout():
+            btn_row_item.layout().insertWidget(0, del_btn)
+        result = dlg.exec()
+        if result == QDialog.DialogCode.Accepted and rec_id:
+            record = {k: v.text().strip() for k, v in fields.items()}
+            try:
+                self.coordinator_repository.update_coordinator(rec_id, record)
+                self.load_coordinators()
+                self.status_bar.showMessage("Coordinator updated", 4000)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
+        elif result == 2 and rec_id:
+            confirm = QMessageBox.question(self, "Delete", "Delete this coordinator?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if confirm == QMessageBox.StandardButton.Yes:
+                try:
+                    self.coordinator_repository.delete_coordinator(rec_id)
+                    self.load_coordinators()
+                    self.status_bar.showMessage("Coordinator deleted", 4000)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", str(e))
+
+    def create_workbook_screen(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setSpacing(12)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+        title = QLabel("Workbook")
+        title.setObjectName("SectionTitle")
+        self.workbook_state_badge = QLabel("No Workbook")
+        self.workbook_state_badge.setObjectName("WorkbookStateBadge")
+        header_row.addWidget(title)
+        header_row.addWidget(self.workbook_state_badge)
+        header_row.addStretch()
+        layout.addLayout(header_row)
+
+        def workbook_btn(text, slot, object_name=None, icon=None):
+            button = QPushButton(text)
+            if object_name:
+                button.setObjectName(object_name)
+            if icon is not None:
+                button.setIcon(self.style().standardIcon(icon))
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(slot)
+            return button
+
+        info_card = QWidget()
+        info_card.setObjectName("Card")
+        info_layout = QVBoxLayout(info_card)
+        info_layout.setContentsMargins(16, 12, 16, 12)
+        info_layout.setSpacing(10)
+
+        self.workbook_path_label = QLabel("No workbook loaded")
+        self.workbook_path_label.setObjectName("WorkbookFileLabel")
+        self.workbook_path_label.setWordWrap(True)
+        self.workbook_status_label = QLabel("No workbook selected.")
+        self.workbook_status_label.setObjectName("WorkbookPathLabel")
+        self.workbook_status_label.setWordWrap(True)
+        info_layout.addWidget(self.workbook_path_label)
+        info_layout.addWidget(self.workbook_status_label)
+
+        self.workbook_open_saved_btn = workbook_btn(
+            "Open Saved",
+            self.load_saved_workbook,
+            icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+        )
+        self.workbook_choose_btn = workbook_btn(
+            "Choose File",
+            self.choose_workbook_file,
+            "SecondaryBtn",
+            QStyle.StandardPixmap.SP_DirIcon,
+        )
+        self.workbook_save_btn = workbook_btn(
+            "Save Workbook",
+            self.save_workbook_tabs,
+            "SuccessBtn",
+            QStyle.StandardPixmap.SP_DialogSaveButton,
+        )
+        self.workbook_reload_btn = workbook_btn(
+            "Reload",
+            lambda: self.load_workbook_tabs(self._workbook_path) if self._workbook_path else self.choose_workbook_file(),
+            "SecondaryBtn",
+            QStyle.StandardPixmap.SP_BrowserReload,
+        )
+        self.workbook_excel_btn = workbook_btn(
+            "Excel",
+            self.open_workbook_in_excel,
+            "SecondaryBtn",
+            QStyle.StandardPixmap.SP_FileIcon,
+        )
+
+        file_actions = QHBoxLayout()
+        file_actions.setSpacing(8)
+        for button in (
+            self.workbook_open_saved_btn,
+            self.workbook_choose_btn,
+            self.workbook_save_btn,
+            self.workbook_reload_btn,
+            self.workbook_excel_btn,
+        ):
+            file_actions.addWidget(button)
+        file_actions.addStretch()
+        info_layout.addLayout(file_actions)
+        layout.addWidget(info_card)
+
+        toolbar = QWidget()
+        toolbar.setObjectName("WorkbookToolbar")
+        toolbar_layout = QVBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(12, 10, 12, 10)
+        toolbar_layout.setSpacing(8)
+
+        sheet_row = QHBoxLayout()
+        sheet_row.setSpacing(8)
+        sheet_lbl = QLabel("Sheet")
+        sheet_lbl.setObjectName("ToolbarLabel")
+        self.workbook_sheet_combo = QComboBox()
+        self.workbook_sheet_combo.setObjectName("WorkbookSheetCombo")
+        self.workbook_sheet_combo.setMinimumWidth(230)
+        self.workbook_sheet_combo.currentIndexChanged.connect(self._on_workbook_sheet_combo_changed)
+        self.workbook_sheet_summary_label = QLabel("No sheet selected")
+        self.workbook_sheet_summary_label.setObjectName("WorkbookSheetSummary")
+        sheet_row.addWidget(sheet_lbl)
+        sheet_row.addWidget(self.workbook_sheet_combo)
+        sheet_row.addWidget(self.workbook_sheet_summary_label, 1)
+        toolbar_layout.addLayout(sheet_row)
+
+        self.workbook_add_column_btn = workbook_btn("Insert Column", self.insert_workbook_column, "SecondaryBtn")
+        self.workbook_delete_column_btn = workbook_btn("Delete Column", self.delete_workbook_column, "DangerBtn")
+        self.workbook_sync_current_btn = workbook_btn("Sync Current", self.sync_current_sheet_to_supabase)
+        self.workbook_sync_all_btn = workbook_btn("Sync All", self.sync_all_workbook_sheets_to_supabase, "SecondaryBtn")
+        self.workbook_export_btn = workbook_btn("Export Students", self.export_all_students_to_excel, "SecondaryBtn")
+
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+        action_row.addWidget(self.workbook_add_column_btn)
+        action_row.addWidget(self.workbook_delete_column_btn)
+        action_row.addStretch()
+        action_row.addWidget(self.workbook_sync_current_btn)
+        action_row.addWidget(self.workbook_sync_all_btn)
+        action_row.addWidget(self.workbook_export_btn)
+        toolbar_layout.addLayout(action_row)
+        layout.addWidget(toolbar)
+
+        self.workbook_empty_card = QWidget()
+        self.workbook_empty_card.setObjectName("Card")
+        empty_layout = QVBoxLayout(self.workbook_empty_card)
+        empty_layout.setContentsMargins(28, 36, 28, 36)
+        empty_layout.setSpacing(12)
+        empty_title = QLabel("No workbook loaded")
+        empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_title.setStyleSheet("font-size: 20px; font-weight: 800; color: #102a43;")
+        empty_btn_row = QHBoxLayout()
+        empty_btn_row.addStretch()
+        empty_saved_btn = QPushButton("Open Saved")
+        empty_saved_btn.clicked.connect(self.load_saved_workbook)
+        empty_open_btn = QPushButton("Choose File")
+        empty_open_btn.setObjectName("SecondaryBtn")
+        empty_open_btn.clicked.connect(self.choose_workbook_file)
+        empty_btn_row.addWidget(empty_saved_btn)
+        empty_btn_row.addWidget(empty_open_btn)
+        empty_btn_row.addStretch()
+        empty_layout.addStretch()
+        empty_layout.addWidget(empty_title)
+        empty_layout.addLayout(empty_btn_row)
+        empty_layout.addStretch()
+        layout.addWidget(self.workbook_empty_card, 1)
+
+        self.workbook_tabs = QTabWidget()
+        self.workbook_tabs.setDocumentMode(True)
+        self.workbook_tabs.setUsesScrollButtons(True)
+        self.workbook_tabs.setElideMode(Qt.TextElideMode.ElideRight)
+        self.workbook_tabs.setMovable(False)
+        self.workbook_tabs.currentChanged.connect(self._on_workbook_tab_changed)
+        self.workbook_tabs.setVisible(False)
+        layout.addWidget(self.workbook_tabs, 1)
+
+        self._refresh_workbook_controls()
+        self.stacked_widget.addWidget(widget)
+    def _settings(self):
+        return QSettings("YWAMBalut", "SSMStudentProfilingSystem")
+
+    def _refresh_workbook_controls(self):
+        has_workbook = bool(self._workbook)
+        for button_name in (
+            "workbook_save_btn",
+            "workbook_reload_btn",
+            "workbook_excel_btn",
+            "workbook_add_column_btn",
+            "workbook_delete_column_btn",
+            "workbook_sync_current_btn",
+            "workbook_sync_all_btn",
+        ):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.setEnabled(has_workbook)
+        if hasattr(self, "workbook_save_btn"):
+            self.workbook_save_btn.setEnabled(has_workbook and self._workbook_dirty)
+        if hasattr(self, "workbook_sheet_combo"):
+            self.workbook_sheet_combo.setEnabled(has_workbook and self.workbook_tabs.count() > 0)
+        self._refresh_workbook_state_badge()
+
+    def _refresh_workbook_state_badge(self):
+        if not hasattr(self, "workbook_state_badge"):
+            return
+        if not self._workbook:
+            text, state = "No Workbook", "empty"
+        elif self._workbook_dirty:
+            text, state = "Unsaved", "dirty"
+        else:
+            text, state = "Saved", "saved"
+        self.workbook_state_badge.setText(text)
+        self.workbook_state_badge.setProperty("state", state)
+        self.workbook_state_badge.style().unpolish(self.workbook_state_badge)
+        self.workbook_state_badge.style().polish(self.workbook_state_badge)
+
+    def _on_workbook_sheet_combo_changed(self, index):
+        if not hasattr(self, "workbook_tabs") or index < 0:
+            return
+        if self.workbook_tabs.currentIndex() != index:
+            self.workbook_tabs.setCurrentIndex(index)
+
+    def _update_workbook_sheet_summary(self, index=None):
+        if not hasattr(self, "workbook_sheet_summary_label"):
+            return
+        if not self._workbook or not hasattr(self, "workbook_tabs") or self.workbook_tabs.count() == 0:
+            self.workbook_sheet_summary_label.setText("No sheet selected")
+            return
+        if index is None:
+            index = self.workbook_tabs.currentIndex()
+        if index < 0:
+            self.workbook_sheet_summary_label.setText("No sheet selected")
+            return
+        table = self.workbook_tabs.widget(index)
+        sheet_name = self.workbook_tabs.tabText(index)
+        if isinstance(table, QTableWidget) and sheet_name in self._loaded_workbook_sheets:
+            self.workbook_sheet_summary_label.setText(f"{sheet_name}: {table.rowCount()} rows x {table.columnCount()} columns")
+        else:
+            self.workbook_sheet_summary_label.setText(f"{sheet_name}: not loaded")
+
+    def load_saved_workbook(self):
+        saved_path = self._settings().value("workbook_path", "", type=str)
+        if saved_path and os.path.exists(saved_path):
+            self.load_workbook_tabs(saved_path)
+            return
+
+        if saved_path:
+            QMessageBox.information(
+                self,
+                "Saved Workbook Missing",
+                f"The saved workbook path was not found:\n{saved_path}\n\nChoose the workbook location for this computer."
+            )
+        self.choose_workbook_file()
+
+    def choose_workbook_file(self):
+        saved_path = self._settings().value("workbook_path", "", type=str)
+        start_dir = os.path.dirname(self._workbook_path or saved_path) if (self._workbook_path or saved_path) else os.path.expanduser("~")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open SSM Workbook",
+            start_dir,
+            "Excel Files (*.xlsx *.xlsm *.xltx *.xltm)"
+        )
+        if path:
+            self.load_workbook_tabs(path)
+
+    def open_workbook_in_excel(self):
+        path = self._workbook_path
+        if not path:
+            saved_path = self._settings().value("workbook_path", "", type=str)
+            start_dir = os.path.dirname(saved_path) if saved_path else os.path.expanduser("~")
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Open Workbook in Excel",
+                start_dir,
+                "Excel Files (*.xlsx *.xlsm *.xltx *.xltm)"
+            )
+            if not path:
+                return
+
+        if self._workbook_dirty:
+            confirm = QMessageBox.question(
+                self,
+                "Unsaved Workbook Changes",
+                "Save workbook changes before opening it in Excel?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
+            )
+            if confirm == QMessageBox.StandardButton.Cancel:
+                return
+            if confirm == QMessageBox.StandardButton.Yes:
+                self.save_workbook_tabs()
+
+        try:
+            os.startfile(path)
+            self.status_bar.showMessage("Opened workbook in Excel", 4000)
+        except Exception as e:
+            QMessageBox.critical(self, "Open in Excel Failed", f"Could not open workbook:\n({type(e).__name__}) {e}")
+
+    def load_workbook_tabs(self, path):
+        if not path:
+            return
+        try:
+            from openpyxl import load_workbook
+
+            if self._workbook and hasattr(self._workbook, "close"):
+                self._workbook.close()
+
+            self._workbook = load_workbook(path, read_only=False, data_only=False)
+            self._workbook_path = path
+            self._settings().setValue("workbook_path", path)
+            self._loaded_workbook_sheets.clear()
+            self._workbook_dirty = False
+            self._workbook_revision += 1
+            self._invalidate_master_reference_cache()
+            self.workbook_tabs.blockSignals(True)
+            self.workbook_tabs.clear()
+            self.workbook_sheet_combo.blockSignals(True)
+            self.workbook_sheet_combo.clear()
+
+            for sheet_name in self._workbook.sheetnames:
+                table = QTableWidget()
+                table.setObjectName("WorkbookTable")
+                table.setAlternatingRowColors(True)
+                table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
+                table.setEditTriggers(
+                    QTableWidget.EditTrigger.DoubleClicked |
+                    QTableWidget.EditTrigger.EditKeyPressed |
+                    QTableWidget.EditTrigger.AnyKeyPressed
+                )
+                table.horizontalHeader().setDefaultSectionSize(150)
+                table.horizontalHeader().setMinimumSectionSize(96)
+                table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+                table.horizontalHeader().setStretchLastSection(False)
+                table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+                table.verticalHeader().setDefaultSectionSize(42)
+                table.verticalHeader().setMinimumSectionSize(42)
+                table.setWordWrap(False)
+                table.cellChanged.connect(self._on_workbook_cell_changed)
+                self.workbook_tabs.addTab(table, sheet_name)
+
+            self.workbook_sheet_combo.addItems(self._workbook.sheetnames)
+            if self._workbook.sheetnames:
+                self.workbook_sheet_combo.setCurrentIndex(0)
+            self.workbook_sheet_combo.blockSignals(False)
+            self.workbook_tabs.blockSignals(False)
+            self.workbook_path_label.setText(os.path.basename(path))
+            self.workbook_path_label.setToolTip(path)
+            self.workbook_status_label.setText(path)
+            self.workbook_empty_card.setVisible(False)
+            self.workbook_tabs.setVisible(True)
+            self._refresh_workbook_controls()
+            if self.workbook_tabs.count():
+                self.workbook_tabs.setCurrentIndex(0)
+                self._load_workbook_sheet(0)
+        except Exception as e:
+            QMessageBox.critical(self, "Workbook Error", f"Could not open workbook:\n({type(e).__name__}) {e}")
+
+    def _on_workbook_tab_changed(self, index):
+        if index < 0:
+            self._update_workbook_sheet_summary(index)
+            return
+        if hasattr(self, "workbook_sheet_combo") and self.workbook_sheet_combo.currentIndex() != index:
+            self.workbook_sheet_combo.blockSignals(True)
+            self.workbook_sheet_combo.setCurrentIndex(index)
+            self.workbook_sheet_combo.blockSignals(False)
+        self._load_workbook_sheet(index)
+        self._update_workbook_sheet_summary(index)
+
+    def _current_workbook_table(self):
+        if not hasattr(self, "workbook_tabs"):
+            return None
+        index = self.workbook_tabs.currentIndex()
+        if index < 0:
+            return None
+        table = self.workbook_tabs.widget(index)
+        return table if isinstance(table, QTableWidget) else None
+
+    def _sync_workbook_side_scroll(self, table=None):
+        pass  # external scroll bar removed; native table scrollbar is used
+
+    def _on_workbook_h_scroll_changed(self, value):
+        pass  # external scroll bar removed
+
+    def _set_workbook_column_widths(self, table):
+        for col in range(table.columnCount()):
+            table.setColumnWidth(col, 150)
+
+    def _load_workbook_sheet(self, index):
+        if not self._workbook or index < 0:
+            return
+        sheet_name = self.workbook_tabs.tabText(index)
+        if sheet_name in self._loaded_workbook_sheets:
+            self._update_workbook_sheet_summary(index)
+            return
+
+        table = self.workbook_tabs.widget(index)
+        self._loading_workbook_sheet = True
+        table.blockSignals(True)
+        table.clear()
+        table.setRowCount(0)
+        table.setColumnCount(0)
+        self.workbook_sheet_summary_label.setText(f"Loading {sheet_name}...")
+        QApplication.processEvents()
+
+        ws = self._workbook[sheet_name]
+        rows = []
+        max_cols = ws.max_column or 0
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=max_cols, values_only=False):
+            values = [self._format_excel_value(value) for value in row]
+            rows.append(values)
+
+        table.setRowCount(len(rows))
+        table.setColumnCount(max_cols)
+        # Use the first row as column headers if available, fall back to A/B/C
+        if rows:
+            header_labels = [
+                v if v else self._excel_column_label(i + 1)
+                for i, v in enumerate(rows[0])
+            ]
+        else:
+            header_labels = [self._excel_column_label(i + 1) for i in range(max_cols)]
+        table.setHorizontalHeaderLabels(header_labels)
+        self._set_workbook_column_widths(table)
+
+        for row_idx, values in enumerate(rows):
+            for col_idx, value in enumerate(values):
+                table.setItem(row_idx, col_idx, QTableWidgetItem(value))
+
+        table.blockSignals(False)
+        self._loading_workbook_sheet = False
+        self._loaded_workbook_sheets.add(sheet_name)
+        self._update_workbook_sheet_summary(index)
+        if not self._workbook_dirty:
+            self.workbook_status_label.setText(self._workbook_path or "")
+        self._refresh_workbook_controls()
+
+    def _on_workbook_cell_changed(self, row, column):
+        if self._loading_workbook_sheet or not self._workbook:
+            return
+        table = self.sender()
+        index = self.workbook_tabs.indexOf(table)
+        if index < 0:
+            return
+
+        sheet_name = self.workbook_tabs.tabText(index)
+        item = table.item(row, column)
+        text = item.text() if item else ""
+        self._workbook[sheet_name].cell(row=row + 1, column=column + 1).value = text if text != "" else None
+        self._workbook_dirty = True
+        self._workbook_revision += 1
+        self._invalidate_master_reference_cache()
+        self.workbook_status_label.setText(f"Unsaved changes in {sheet_name}.")
+        self._refresh_workbook_controls()
+        self._update_workbook_sheet_summary(index)
+
+    def insert_workbook_column(self):
+        if not self._workbook:
+            QMessageBox.information(self, "Workbook", "Open a workbook first.")
+            return
+
+        index = self.workbook_tabs.currentIndex()
+        if index < 0:
+            return
+
+        sheet_name = self.workbook_tabs.tabText(index)
+        table = self.workbook_tabs.widget(index)
+        ws = self._workbook[sheet_name]
+
+        if sheet_name not in self._loaded_workbook_sheets:
+            self._load_workbook_sheet(index)
+
+        selected_col = table.currentColumn()
+        insert_col = selected_col if selected_col >= 0 else table.columnCount()
+        excel_col = insert_col + 1
+        ws.insert_cols(excel_col)
+
+        table.blockSignals(True)
+        table.insertColumn(insert_col)
+        table.setHorizontalHeaderItem(insert_col, QTableWidgetItem(self._excel_column_label(excel_col)))
+        table.setColumnWidth(insert_col, 150)
+
+        if table.rowCount() == 0:
+            table.setRowCount(1)
+
+        for row in range(table.rowCount()):
+            table.setItem(row, insert_col, QTableWidgetItem(""))
+
+        table.item(0, insert_col).setText("New Column")
+        ws.cell(row=1, column=excel_col).value = "New Column"
+        self._refresh_workbook_table_headers(table)
+        table.blockSignals(False)
+
+        self._workbook_dirty = True
+        self._workbook_revision += 1
+        self._invalidate_master_reference_cache()
+        self._refresh_workbook_controls()
+        self._update_workbook_sheet_summary(index)
+        table.setCurrentCell(0, insert_col)
+        table.editItem(table.item(0, insert_col))
+        self.workbook_status_label.setText(f"Inserted column in {sheet_name}.")
+
+    def delete_workbook_column(self):
+        if not self._workbook:
+            QMessageBox.information(self, "Workbook", "Open a workbook first.")
+            return
+
+        index = self.workbook_tabs.currentIndex()
+        if index < 0:
+            return
+
+        sheet_name = self.workbook_tabs.tabText(index)
+        table = self.workbook_tabs.widget(index)
+        ws = self._workbook[sheet_name]
+
+        if sheet_name not in self._loaded_workbook_sheets:
+            self._load_workbook_sheet(index)
+
+        selected_col = table.currentColumn()
+        if selected_col < 0:
+            QMessageBox.information(self, "Delete Column", "Select a column or cell first.")
+            return
+
+        col_label = self._excel_column_label(selected_col + 1)
+        confirm = QMessageBox.question(
+            self,
+            "Delete Column",
+            f"Delete column {col_label} from '{sheet_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        ws.delete_cols(selected_col + 1)
+        table.blockSignals(True)
+        table.removeColumn(selected_col)
+        self._refresh_workbook_table_headers(table)
+        table.blockSignals(False)
+
+        self._workbook_dirty = True
+        self._workbook_revision += 1
+        self._invalidate_master_reference_cache()
+        self._refresh_workbook_controls()
+        self._update_workbook_sheet_summary(index)
+        self.workbook_status_label.setText(f"Deleted column {col_label} from {sheet_name}.")
+
+    def _refresh_workbook_table_headers(self, table):
+        for col in range(table.columnCount()):
+            table.setHorizontalHeaderItem(col, QTableWidgetItem(self._excel_column_label(col + 1)))
+
+    def save_workbook_tabs(self):
+        if not self._workbook or not self._workbook_path:
+            QMessageBox.information(self, "Workbook", "No workbook is open.")
+            return
+        try:
+            self._workbook.save(self._workbook_path)
+            self._workbook_dirty = False
+            self._workbook_revision += 1
+            self._invalidate_master_reference_cache()
+            self.workbook_status_label.setText(self._workbook_path)
+            self._refresh_workbook_controls()
+            self.status_bar.showMessage("Workbook saved", 4000)
+        except PermissionError:
+            QMessageBox.warning(
+                self,
+                "Workbook Is Open",
+                "Could not save the workbook. Please close it in Excel, then click Save Workbook again."
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Could not save workbook:\n({type(e).__name__}) {e}")
+
+    def sync_current_sheet_to_supabase(self):
+        if not self._workbook:
+            QMessageBox.information(self, "Sync", "Open a workbook first.")
+            return
+        index = self.workbook_tabs.currentIndex()
+        if index < 0:
+            return
+        sheet_name = self.workbook_tabs.tabText(index)
+        if self._is_old_master_sheet(sheet_name):
+            latest_master = self._latest_master_sheet_name()
+            QMessageBox.warning(
+                self,
+                "Old Master Sheet",
+                f"'{sheet_name}' looks like an older master list.\n\nUse '{latest_master}' for student sync, or export from Supabase instead."
+            )
+            return
+        try:
+            count = self._sync_workbook_sheet_to_supabase(sheet_name)
+            if count is None:
+                QMessageBox.information(self, "Sync", f"'{sheet_name}' is not a supported Supabase sync sheet.")
+                return
+            QMessageBox.information(self, "Sync Complete", f"Synced {count} records from '{sheet_name}'.")
+            self.workbook_status_label.setText(f"Synced {count} records from {sheet_name}.")
+            self.refresh_dashboard()
+        except Exception as e:
+            QMessageBox.critical(self, "Sync Failed", f"Could not sync '{sheet_name}':\n({type(e).__name__}) {e}")
+
+    def sync_all_workbook_sheets_to_supabase(self):
+        if not self._workbook:
+            QMessageBox.information(self, "Sync", "Open a workbook first.")
+            return
+        try:
+            results = []
+            latest_master = self._latest_master_sheet_name()
+            for sheet_name in self._workbook.sheetnames:
+                if "master" in sheet_name.lower() and sheet_name != latest_master:
+                    continue
+                count = self._sync_workbook_sheet_to_supabase(sheet_name)
+                if count is not None:
+                    results.append(f"{sheet_name}: {count}")
+            if not results:
+                QMessageBox.information(self, "Sync", "No supported workbook sheets were found.")
+                return
+            QMessageBox.information(self, "Sync Complete", "Synced sheets:\n" + "\n".join(results))
+            self.workbook_status_label.setText(f"Synced {len(results)} sheets to Supabase.")
+            self.refresh_dashboard()
+        except Exception as e:
+            QMessageBox.critical(self, "Sync Failed", f"Could not sync workbook:\n({type(e).__name__}) {e}")
+
+    def _sync_workbook_sheet_to_supabase(self, sheet_name):
+        return self.workbook_import_service.sync_sheet(self._workbook, sheet_name)
+
+    def _is_old_master_sheet(self, sheet_name):
+        latest_master = self._latest_master_sheet_name()
+        return "master" in sheet_name.lower() and latest_master and sheet_name != latest_master
+
+    def _sync_masterlist_sheet(self, sheet_name):
+        return self.workbook_import_service.sync_masterlist_sheet(self._workbook, sheet_name)
+
+    def _sync_coordinator_sheet(self, sheet_name):
+        return self.workbook_import_service.sync_coordinator_sheet(self._workbook, sheet_name)
+
+    def _sync_donor_sheet(self, sheet_name):
+        return self.workbook_import_service.sync_donor_sheet(self._workbook, sheet_name)
+
+    def _sync_movements_sheet(self, sheet_name):
+        return self.workbook_import_service.sync_movements_sheet(self._workbook, sheet_name)
+
+    def _insert_chunks(self, table_name, records, size=100):
+        self.workbook_repository.insert_records(table_name, records, chunk_size=size)
+    def _sheet_values(self, sheet_name):
+        return self.workbook_import_service.sheet_values(self._workbook, sheet_name)
+
+    def _find_header_row(self, rows, required):
+        return self.workbook_import_service.find_header_row(rows, required)
+
+    def _header_map(self, row):
+        return self.workbook_import_service.header_map(row)
+
+    def _normalize_header(self, value):
+        return self.workbook_import_service.normalize_header(value)
+
+    def _safe_cell(self, row, index):
+        return self.workbook_import_service.safe_cell(row, index)
+
+    def _school_year_from_sheet(self, sheet_name):
+        return self.workbook_import_service.school_year_from_sheet(sheet_name)
+
+    def _format_excel_value(self, value):
+        return self.workbook_import_service.format_excel_value(value)
+    def _excel_column_label(self, number):
+        label = ""
+        while number:
+            number, remainder = divmod(number - 1, 26)
+            label = chr(65 + remainder) + label
+        return label
+
+    # ── LIST ──────────────────────────────────────────────────────────────────
+    def _latest_master_sheet_name(self):
+        return self._latest_master_sheet_name_from_names(self._workbook.sheetnames)
+
+    def _sheet_year_score(self, sheet_name):
+        return self.masterlist_service.sheet_year_score(sheet_name)
+    def load_student_list(self):
+        self.list_widget.clear()
+        if not self.student_list_mode:
+            self.show_student_view_prompt()
+            return
+        if self.student_list_mode == "areas":
+            area_q = self.area_select.currentText().strip()
+            if not area_q or area_q == "Choose Area":
+                self.show_area_choice_prompt()
+                return
+        columns = (
+                "id,last_name,first_name,birthday,gender,grade,sponsor,area,status,"
+                "address,city,contact,school,parents,course,photo_url,remarks"
+        )
+        name_q = self.search_name.text().strip()
+        sponsor_q = self.search_sponsor.text().strip()
+        area_q = self.area_select.currentText().strip() if self.student_list_mode == "areas" else ""
+        status = self.filter_status.currentText()
+        grade = self.filter_grade.currentText()
+        self._student_list_request += 1
+        request_id = self._student_list_request
+        self.status_bar.showMessage("Loading students...", 30000)
+
+        def fetch_rows():
+            return self.student_repository.search_students(
+                columns=columns,
+                name_query=name_q or None,
+                sponsor_query=sponsor_q or None,
+                area=area_q if area_q and area_q != "Choose Area" else None,
+                area_exact=False,
+                order_by=["area", "last_name"],
+            )
+
+        def apply_rows(rows):
+            if request_id != self._student_list_request:
+                return
+            rows = self._filter_current_master_rows(rows)
+            rows = self.student_list_service.filter_rows(
+                rows,
+                status=status,
+                grade=grade,
+            )
+            self._student_list_rows = rows
+            self.render_student_list()
+            self.status_bar.showMessage(f"Loaded {len(rows)} students", 3000)
+
+        def show_error(error):
+            if request_id == self._student_list_request:
+                self.status_bar.showMessage(f"Load error: {error.strip().splitlines()[-1]}", 8000)
+
+        return self._run_background(fetch_rows, apply_rows, show_error)
+
+    def set_student_list_mode(self, mode):
+        self.student_list_mode = mode
+        self.btn_all_students.setChecked(mode == "all")
+        self.btn_areas.setChecked(mode == "areas")
+        self.area_select.setVisible(mode == "areas")
+        self.back_to_areas_btn.setVisible(False)
+        if mode == "areas":
+            self._student_list_rows = []
+            self.list_widget.clear()
+            self.refresh_area_dropdown()
+            self.show_area_choice_prompt()
+            return
+        self.load_student_list()
+
+    def clear_student_filters(self):
+        widgets = (self.search_name, self.search_sponsor, self.filter_grade, self.filter_status, self.area_select)
+        for widget in widgets:
+            widget.blockSignals(True)
+        self.search_name.clear()
+        self.search_sponsor.clear()
+        self.filter_grade.setCurrentIndex(0)
+        self.filter_status.setCurrentIndex(0)
+        if self.area_select.count():
+            self.area_select.setCurrentIndex(0)
+        for widget in widgets:
+            widget.blockSignals(False)
+
+        if self.student_list_mode == "areas":
+            self._student_list_rows = []
+            self.back_to_areas_btn.setVisible(False)
+            self.show_area_choice_prompt()
+        elif self.student_list_mode:
+            self.load_student_list()
+        else:
+            self.show_student_view_prompt()
+
+    def back_to_area_choices(self):
+        if self.student_list_mode != "areas":
+            return
+        self.area_select.blockSignals(True)
+        self.area_select.setCurrentIndex(0)
+        self.area_select.blockSignals(False)
+        self._student_list_rows = []
+        self.back_to_areas_btn.setVisible(False)
+        self.show_area_choice_prompt()
+
+    def show_student_view_prompt(self):
+        self.btn_all_students.setChecked(False)
+        self.btn_areas.setChecked(False)
+        self.back_to_areas_btn.setVisible(False)
+        self.count_label.setText("Students")
+        self.list_widget.clear()
+        item = QListWidgetItem("Select a view above to load student records.")
+        item.setData(Qt.ItemDataRole.UserRole, None)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        item.setForeground(QColor("#627d98"))
+        self.list_widget.addItem(item)
+
+    def show_area_choice_prompt(self):
+        self.list_widget.clear()
+        self.back_to_areas_btn.setVisible(False)
+        areas = getattr(self, "_area_options", [])
+        if not areas:
+            item = QListWidgetItem("No areas found.")
+            item.setData(Qt.ItemDataRole.UserRole, None)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            item.setForeground(QColor("#627d98"))
+            self.list_widget.addItem(item)
+            return
+
+        total = sum(getattr(self, "_area_counts", {}).values())
+        self.count_label.setText(f"Areas - {total} current students")
+        for area in areas:
+            count = getattr(self, "_area_counts", {}).get(area, 0)
+            noun = "student" if count == 1 else "students"
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, ("area", area))
+            item.setSizeHint(QSize(0, 96))
+            item.setToolTip(f"Open {area}")
+            self.list_widget.addItem(item)
+            self.list_widget.setItemWidget(item, self._area_choice_widget(area, f"{count} {noun}"))
+
+    def refresh_area_dropdown(self):
+        current = self.area_select.currentText()
+        try:
+            rows = self.student_repository.list_students(columns="last_name,first_name,birthday,area")
+            area_counts = self.student_list_service.area_counts(
+                self._filter_current_master_rows(rows)
+            )
+            areas = sorted(area_counts)
+        except Exception as e:
+            self.status_bar.showMessage(f"Area load error ({type(e).__name__}): {e}", 8000)
+            return
+
+        self._area_options = areas
+        self._area_counts = area_counts
+
+        self.area_select.blockSignals(True)
+        self.area_select.clear()
+        self.area_select.addItem("Choose Area")
+        self.area_select.addItems(areas)
+        if current in areas:
+            self.area_select.setCurrentText(current)
+        else:
+            self.area_select.setCurrentIndex(0)
+        self.area_select.blockSignals(False)
+
+    def refresh_grade_filter(self):
+        current = self.filter_grade.currentText()
+        try:
+            rows = self.student_repository.list_students(columns="last_name,first_name,birthday,grade")
+            grades = self.student_list_service.grade_options(
+                self._filter_current_master_rows(rows)
+            )
+        except Exception as e:
+            self.status_bar.showMessage(f"Grade load error ({type(e).__name__}): {e}", 8000)
+            return
+
+        self.filter_grade.blockSignals(True)
+        self.filter_grade.clear()
+        self.filter_grade.addItem("All Grades")
+        self.filter_grade.addItems(grades)
+        if current in grades:
+            self.filter_grade.setCurrentText(current)
+        else:
+            self.filter_grade.setCurrentIndex(0)
+        self.filter_grade.blockSignals(False)
+
+    def _normalize_grade(self, value):
+        return self.student_service.normalize_grade(value)
+
+    def _grade_sort_key(self, grade):
+        return self.student_service.grade_sort_key(grade)
+
+    def render_student_list(self):
+        rows = self._student_list_rows
+        self.list_widget.clear()
+
+        if self.student_list_mode == "areas":
+            selected_area = self.area_select.currentText().strip()
+            if not selected_area or selected_area == "Choose Area":
+                self.show_area_choice_prompt()
+                return
+            self.back_to_areas_btn.setVisible(True)
+            for student in rows:
+                self._add_student_list_item(student)
+        else:
+            self.back_to_areas_btn.setVisible(False)
+            for student in rows:
+                self._add_student_list_item(student)
+
+        noun = "student" if len(rows) == 1 else "students"
+        if self.student_list_mode == "areas":
+            self.count_label.setText(f"{self.area_select.currentText()} - {len(rows)} {noun}")
+        else:
+            self.count_label.setText(f"All Students - {len(rows)} {noun}")
+
+    def _render_students_by_area(self, rows):
+        from collections import defaultdict
+
+        grouped = defaultdict(list)
+        for student in rows:
+            area = (student.get("area") or "No Area").strip() or "No Area"
+            grouped[area].append(student)
+
+        for area in sorted(grouped):
+            students = sorted(grouped[area], key=lambda s: ((s.get("last_name") or "").lower(), (s.get("first_name") or "").lower()))
+            header = QListWidgetItem(f"{area}  ({len(students)})")
+            header.setData(Qt.ItemDataRole.UserRole, None)
+            header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled)
+            header.setForeground(QColor("#102a43"))
+            header.setBackground(QColor("#e4f0ff"))
+            font = header.font()
+            font.setBold(True)
+            header.setFont(font)
+            self.list_widget.addItem(header)
+
+            for student in students:
+                item = self._student_list_item(student, indent=True)
+                self.list_widget.addItem(item)
+
+    def _student_list_item(self, student, indent=False):
+        full_status, status, status_color = self._status_style(student.get("status"))
+        status_icon = "●"
+        g = str(student.get("gender") or "").strip().upper()
+        gender = f" ({g})" if g else ""
+        grade = student.get("grade") or "--"
+        sponsor = student.get("sponsor") or "--"
+        area = student.get("area") or "--"
+        prefix = "    " if indent else ""
+        label = f"{prefix}{status_icon} {student['last_name']}, {student['first_name']}{gender}    {status}    {grade} | {sponsor} | {area}"
+
+        item = QListWidgetItem(label)
+        item.setData(Qt.ItemDataRole.UserRole, student["id"])
+        item.setForeground(QColor(status_color))
+        return item
+
+    def _add_student_list_item(self, student, indent=False):
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, student["id"])
+        name = f"{student.get('last_name', '')}, {student.get('first_name', '')}".strip(", ")
+        item.setToolTip(f"Open {name or 'student'} profile - {self._profile_completion_percent(student)}% complete")
+        
+        card_widget = self._student_card_widget(student, indent)
+        item.setSizeHint(QSize(0, 164))
+        
+        self.list_widget.addItem(item)
+        self.list_widget.setItemWidget(item, card_widget)
+
+    def _area_choice_widget(self, area, count_text):
+        row = QWidget()
+        row.setFixedHeight(86)
+        row.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        row.setStyleSheet("""
+            QWidget {
+                background: transparent;
+            }
+            QLabel#AreaName {
+                color: #102a43;
+                font-size: 15px;
+                font-weight: 800;
+                min-height: 20px;
+            }
+            QLabel#AreaCount {
+                color: #0b63ce;
+                background: #e4f0ff;
+                border: 1px solid #c8ddf5;
+                border-radius: 12px;
+                padding: 4px 10px;
+                font-size: 12px;
+                font-weight: 800;
+            }
+            QLabel#AreaAction {
+                color: #0b63ce;
+                font-size: 22px;
+                font-weight: 800;
+                min-width: 22px;
+            }
+            QLabel#AreaHint {
+                color: #627d98;
+                font-size: 12px;
+                min-height: 18px;
+            }
+        """)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(12)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(3)
+        area_label = QLabel(area)
+        area_label.setObjectName("AreaName")
+        hint_label = QLabel("Open this area")
+        hint_label.setObjectName("AreaHint")
+        text_col.addWidget(area_label)
+        text_col.addWidget(hint_label)
+
+        count_label = QLabel(count_text)
+        count_label.setObjectName("AreaCount")
+        action_label = QLabel(">")
+        action_label.setObjectName("AreaAction")
+        layout.addLayout(text_col, 1)
+        layout.addWidget(count_label)
+        layout.addWidget(action_label)
+        return row
+
+    def _student_card_widget(self, student, indent=False):
+        full_status, status_text, status_color = self._status_style(student.get("status"))
+        first = student.get("first_name") or ""
+        last = student.get("last_name") or ""
+        gender = str(student.get("gender") or "").strip().upper()
+        grade = student.get("grade") or "--"
+        sponsor = student.get("sponsor") or "--"
+        area = student.get("area") or "--"
+
+        row = QWidget()
+        row.setFixedHeight(144)
+        row.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        row.setStyleSheet(f"""
+            QWidget {{
+                background: transparent;
+            }}
+            QLabel#StatusDot {{
+                background: {status_color};
+                border-radius: 6px;
+                min-width: 12px;
+                max-width: 12px;
+                min-height: 12px;
+                max-height: 12px;
+                margin-top: 5px; /* ADJUSTED ALIGNMENT FIX */
+            }}
+            QLabel#StudentName {{
+                color: #102a43;
+                font-size: 15px;
+                font-weight: 800;
+            }}
+            QLabel#StudentMeta {{
+                color: #52606d;
+                font-size: 12px;
+            }}
+            QLabel#RemarksTitle {{
+                color: #829ab1;
+                font-size: 11px;
+                font-weight: 800;
+            }}
+            QLabel#RemarksText {{
+                color: #334e68;
+                font-size: 12px;
+                line-height: 15px;
+            }}
+            QWidget#RemarksPanel {{
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+            }}
+            QLabel#StudentBadge {{
+                color: {status_color};
+                background: #f8fafc;
+                border: 1px solid #d9e2ec;
+                border-radius: 12px;
+                padding: 3px 10px;
+                font-size: 12px;
+                font-weight: 800;
+                min-width: 86px;
+                min-height: 30px;
+                max-height: 30px;
+            }}
+            QLabel#GradeBadge {{
+                color: #0b63ce;
+                background: #e4f0ff;
+                border: 1px solid #c8ddf5;
+                border-radius: 12px;
+                padding: 3px 10px;
+                font-size: 12px;
+                font-weight: 800;
+                min-width: 86px;
+                min-height: 30px;
+                max-height: 30px;
+            }}
+        """)
+        
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(16 + (18 if indent else 0), 12, 16, 12)
+        layout.setSpacing(12)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(5)
+
+        # --- THE INLINE NAME ROW ---
+        name_row = QHBoxLayout()
+        name_row.setSpacing(8)
+
+        dot = QLabel()
+        dot.setObjectName("StatusDot")
+        dot.setFixedSize(12, 17) # Increased slightly for 5px margin
+
+        name_text = f"{last}, {first}".strip(", ")
+        if gender:
+            name_text += f" ({gender})"
+        name_label = QLabel(name_text or "Unnamed student")
+        name_label.setObjectName("StudentName")
+        name_label.setWordWrap(True)
+
+        # Align dot to top, and give the label a stretch factor of 1
+        name_row.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
+        name_row.addWidget(name_label, 1) 
+        
+        text_col.addLayout(name_row)
+        # ---------------------------
+
+        meta_label = QLabel(f"Sponsor: {sponsor}    Area: {area}")
+        meta_label.setObjectName("StudentMeta")
+        meta_label.setWordWrap(True)
+        text_col.addWidget(meta_label)
+
+        grade_badge = QLabel(str(grade))
+        grade_badge.setObjectName("GradeBadge")
+        grade_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        grade_badge.setFixedHeight(30)
+        status_badge = QLabel(status_text)
+        status_badge.setObjectName("StudentBadge")
+        status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_badge.setFixedHeight(30)
+        completion_ring = CircularProgress(size=44)
+        completion_ring.set_value(self._profile_completion_percent(student))
+        completion_ring.setToolTip(f"Profile completion: {completion_ring.value}%")
+
+        badges = QHBoxLayout()
+        badges.setSpacing(8)
+        badges.addWidget(grade_badge)
+        badges.addWidget(status_badge)
+        badges.addWidget(completion_ring)
+        badges.addStretch()
+        text_col.addLayout(badges)
+
+        # SPRING FIX: Pushes everything up tight!
+        text_col.addStretch()
+
+        layout.addLayout(text_col, 1)
+
+        remarks = " ".join(str(student.get("remarks") or "").split())
+        remarks_panel = QWidget()
+        remarks_panel.setObjectName("RemarksPanel")
+        remarks_panel.setMinimumWidth(300)
+        remarks_panel.setMaximumWidth(500)
+        remarks_layout = QVBoxLayout(remarks_panel)
+        remarks_layout.setContentsMargins(12, 9, 12, 9)
+        remarks_layout.setSpacing(4)
+
+        remarks_title = QLabel("Remarks")
+        remarks_title.setObjectName("RemarksTitle")
+        remarks_text = QLabel(remarks or "No remarks")
+        remarks_text.setObjectName("RemarksText")
+        remarks_text.setWordWrap(True)
+        remarks_text.setMaximumHeight(54)
+        remarks_text.setToolTip(remarks or "No remarks")
+
+        if not remarks:
+            remarks_text.setStyleSheet("color: #9fb3c8; font-style: italic;")
+
+        remarks_layout.addWidget(remarks_title)
+        remarks_layout.addWidget(remarks_text, 1)
+        layout.addWidget(remarks_panel, 2)
+        return row
+
+    def on_student_click(self, item):
+        item_data = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(item_data, tuple) and len(item_data) == 2 and item_data[0] == "area":
+            area = item_data[1]
+            self.status_bar.showMessage(f"Loading students in {area}...", 2500)
+            area_index = self.area_select.findText(area)
+            self.area_select.blockSignals(True)
+            if area_index >= 0:
+                self.area_select.setCurrentIndex(area_index)
+            else:
+                self.area_select.setCurrentText(area)
+            self.area_select.blockSignals(False)
+            self.load_student_list()
+            return
+
+        self.current_student_id = item_data
+        if not self.current_student_id:
+            return
+        self._load_profile(self.current_student_id)
+        self._switch_page(2)
+
+    def _load_profile(self, sid):
+        try:
+            student = self.student_repository.get_student_single(sid)
+            s = self._apply_current_master_status(student)
+            full_status, short_status, status_color = self._status_style(s.get("status"))
+            inactive = (full_status != "Active")
+            
+            # 1. Update Buttons and Status
+            master_status = s.get("_status_source") == "masterlist"
+            self.deactivate_btn.setVisible(not master_status)
+            self.deactivate_btn.setEnabled(True)
+            self.deactivate_btn.setToolTip("")
+            if inactive:
+                self.deactivate_btn.setText("Mark Active")
+                self.deactivate_btn.setObjectName("SuccessBtn")
+                self.deactivate_btn.style().unpolish(self.deactivate_btn)
+                self.deactivate_btn.style().polish(self.deactivate_btn)
+            else:
+                self.deactivate_btn.setText("Mark Inactive")
+                self.deactivate_btn.setObjectName("DangerBtn")
+                self.deactivate_btn.style().unpolish(self.deactivate_btn)
+                self.deactivate_btn.style().polish(self.deactivate_btn)
+            self.lbl_profile_status.setText(
+                f"<span style='color:{status_color}; font-size:16px;'>●</span> "
+                f"<span style='color:{status_color};'>{full_status}</span>"
+            )
+            self.lbl_profile_status.setStyleSheet("font-size: 14px; font-weight: 800; margin-bottom: 10px;")
+
+            # 2. Update Header Name
+            self.lbl_profile_name.setText(f"{s.get('last_name', '')}, {s.get('first_name', '')}")
+
+            # 3. Safely update all grid labels
+            fields = [
+                "gender", "grade", "area", "city", "address", 
+                "birthday", "contact", "sponsor", "school", 
+                "parents", "course"
+            ]
+            
+            for field in fields:
+                val = s.get(field)
+                # Ensure we handle None or empty strings gracefully
+                display_text = str(val).strip() if val and str(val).strip() else "--"
+                self.profile_data_labels[field].setText(display_text)
+
+            self.remarks_edit.setPlainText(s.get("remarks") or "")
+
+            photo_url = s.get("photo_url")
+            self._load_photo_from_url(self.photo_label, photo_url)
+            self.remove_photo_btn.setVisible(bool(photo_url))
+
+            self.profile_progress.set_value(self._profile_completion_percent(s))
+
+        except Exception as e:
+            self.status_bar.showMessage(f"Load error ({type(e).__name__}): {e}", 8000)
+    
+
+    # ── PHOTO ─────────────────────────────────────────────────────────────────
+    # Local photo cache: {url_without_query -> local_path}
+    _photo_cache: dict = {}
+
+    def _photo_cache_path(self, url: str) -> str:
+        return self.photo_service.photo_cache_path(url)
+
+    def _load_photo_from_url(self, label, url, log=None):
+        """Show photo from local cache instantly; download in background if missing.
+
+        A generation counter (_photo_gen) is stamped at call-time so that if
+        the user navigates to another student before the download finishes, the
+        stale callback detects the mismatch and discards its result instead of
+        overwriting the newly-loaded profile photo.
+        """
+        def L(msg):
+            if log is not None: log.append(msg)
+        if not url:
+            label.clear(); label.setText("No Photo"); return
+
+        cache_path = self._photo_cache_path(url)
+
+        # Serve from disk cache immediately if available — no network needed.
+        if os.path.exists(cache_path):
+            self._set_photo_local(label, cache_path)
+            return
+
+        # Bump the generation so any in-flight fetch for the *previous* student
+        # can detect it is now stale.
+        self._photo_gen = getattr(self, "_photo_gen", 0) + 1
+        my_gen = self._photo_gen
+
+        def fetch():
+            _path, data = self.photo_service.download_photo_to_cache(url)
+            return data
+
+        def apply(data):
+            if getattr(self, "_photo_gen", 0) != my_gen:
+                return
+            pix = QPixmap()
+            if pix.loadFromData(data) and not pix.isNull():
+                w = label.width() or 140
+                h = label.height() or 170
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                label.setPixmap(self._scale_cover(pix, w, h))
+            else:
+                label.clear()
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                label.setText("No Photo")
+
+        def fail(error):
+            L(f"Photo fetch failed: {error.strip().splitlines()[-1]}")
+            if getattr(self, "_photo_gen", 0) == my_gen:
+                label.clear()
+                label.setText("No Photo")
+
+        self._run_background(fetch, apply, fail)
+    @staticmethod
+    def _scale_cover(pixmap: "QPixmap", w: int, h: int) -> "QPixmap":
+        """Scale pixmap to fill w x h (cover), then centre-crop — no letterbox."""
+        scaled = pixmap.scaled(w, h,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation)
+        if scaled.width() > w or scaled.height() > h:
+            x = (scaled.width()  - w) // 2
+            y = (scaled.height() - h) // 2
+            scaled = scaled.copy(x, y, w, h)
+        return scaled
+
+    def _set_photo_local(self, label, path):
+        if path and os.path.exists(path):
+            w = label.width() or 140
+            h = label.height() or 170
+            pix = self._scale_cover(QPixmap(path), w, h)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setPixmap(pix)
+        else:
+            label.clear()
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setText("No Photo")
+
+    def _upload_photo(self, local_path, student_id, log=None):
+        return self.photo_service.upload_photo(local_path, student_id, log)
+
+    def _cache_uploaded_photo(self, source_path, url):
+        try:
+            return self.photo_service.cache_uploaded_photo(source_path, url)
+        except Exception:
+            return None
+
+    def change_photo(self):
+        if not self.current_student_id:
+            QMessageBox.warning(self, "No Student", "No student selected.")
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Select Photo", "", "Images (*.png *.jpg *.jpeg *.bmp)")
+        if not path:
+            return
+        sid = self.current_student_id
+        self.status_bar.showMessage("Uploading photo... please wait")
+        self.change_photo_btn.setEnabled(False)
+
+        def upload():
+            log = []
+            logging.getLogger(__name__).info("Uploading photo for student %s", sid)
+            url = self._upload_photo(path, sid, log)
+            self.student_repository.update_photo_url(sid, url)
+            self._cache_uploaded_photo(path, url)
+            return url
+
+        def done(_url):
+            self.change_photo_btn.setEnabled(True)
+            if self.current_student_id == sid:
+                self._load_profile(sid)
+            self.status_bar.showMessage("Photo updated", 5000)
+
+        def failed(error):
+            self.change_photo_btn.setEnabled(True)
+            logging.getLogger(__name__).error("Photo upload failed:\n%s", error)
+            self.status_bar.showMessage("Photo upload failed", 5000)
+            QMessageBox.critical(self, "Photo Upload Failed", error.strip().splitlines()[-1])
+
+        self._run_background(upload, done, failed)
+
+    def remove_photo(self):
+        """Delete the student's photo from Storage and clear photo_url in the DB."""
+        if not self.current_student_id:
+            return
+        confirm = QMessageBox.question(
+            self, "Remove Photo",
+            "Remove this student's photo? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        sid = self.current_student_id
+        self.status_bar.showMessage("Removing photo…", 30000)
+        self.remove_photo_btn.setEnabled(False)
+
+        def remove():
+            self.student_repository.update_photo_url(sid, None)
+            self.photo_service.clear_student_cache(sid)
+            self.photo_service.delete_storage_photo_variants(sid)
+
+        def done(_result):
+            self.remove_photo_btn.setEnabled(True)
+            if self.current_student_id == sid:
+                self._load_profile(sid)
+            self.status_bar.showMessage("Photo removed", 4000)
+
+        def failed(error):
+            self.remove_photo_btn.setEnabled(True)
+            self.status_bar.showMessage("Remove failed", 5000)
+            QMessageBox.critical(self, "Remove Photo Failed", error.strip().splitlines()[-1])
+
+        self._run_background(remove, done, failed)
+
+    def pick_add_photo(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Photo", "", "Images (*.png *.jpg *.jpeg *.bmp)")
+        if path:
+            self._pending_photo = path
+            self._set_photo_local(self.add_photo_label, path)
+
+    # ── REMARKS ───────────────────────────────────────────────────────────────
+    def save_remarks(self):
+        if not self.current_student_id: return
+        self._update_field("students", "remarks", self.remarks_edit.toPlainText(), self.current_student_id)
+
+    # ── TOGGLE STATUS ─────────────────────────────────────────────────────────
+    def toggle_active_status(self):
+        if not self.current_student_id: return
+        try:
+            student = self.student_repository.get_student_single(self.current_student_id)
+            current = self._apply_current_master_status(student).get("status")
+            new_status = "Active" if current == "Inactive/Removed" else "Inactive/Removed"
+            self.student_repository.update_status(self.current_student_id, new_status)
+            self._load_profile(self.current_student_id)
+            self.status_bar.showMessage(f"Status set to {new_status}", 3000)
+            self.refresh_dashboard() # Update dashboard stats silently
+        except Exception as e:
+            self.status_bar.showMessage(f"Status update error ({type(e).__name__}): {e}", 8000)
+
+    # ── ADD / EDIT FORM ───────────────────────────────────────────────────────
+    def _open_add_screen(self):
+        self._clear_form()
+        self._switch_page(3)
+
+    def open_edit_screen(self):
+        if not self.current_student_id: return
+        try:
+            student = self.student_repository.get_student_single(self.current_student_id)
+            s = self._apply_current_master_status(student)
+            self.form_title_label.setText("Edit Student")
+            self._editing_id = self.current_student_id
+            self.inp_last.setText(s.get("last_name") or "")
+            self.inp_first.setText(s.get("first_name") or "")
+            self.inp_gender.setCurrentIndex(max(self.inp_gender.findText(s.get("gender") or ""), 0))
+            self.inp_grade.setText(s.get("grade") or "")
+            self.inp_address.setText(s.get("address") or "")
+            self.inp_city.setText(s.get("city") or "")
+            self.inp_area.setText(s.get("area") or "")
+            self.inp_bday.setText(s.get("birthday") or "")
+            self.inp_sponsor.setText(s.get("sponsor") or "")
+            self.inp_contact.setText(s.get("contact") or "")
+            self.inp_school.setText(s.get("school") or "")
+            self.inp_parents.setText(s.get("parents") or "")
+            self.inp_course.setText(s.get("course") or "")
+            self.inp_remarks.setPlainText(s.get("remarks") or "")
+            self.inp_status.setCurrentIndex(max(self.inp_status.findText(s.get("status") or "Active"), 0))
+            master_status = s.get("_status_source") == "masterlist"
+            self.inp_status.setEnabled(not master_status)
+            self.inp_status.setToolTip("Edit the latest masterlist workbook to change this status." if master_status else "")
+            self._pending_photo = None
+            self.add_photo_label.clear(); self.add_photo_label.setText("No Photo")
+            self._switch_page(3)
+        except Exception as e:
+            self.status_bar.showMessage(f"Load error ({type(e).__name__}): {e}", 8000)
+
+    def _clear_form(self):
+        for w in (self.inp_last, self.inp_first, self.inp_grade, self.inp_address,
+                  self.inp_city, self.inp_area, self.inp_bday, self.inp_sponsor,
+                  self.inp_contact, self.inp_school, self.inp_parents, self.inp_course):
+            w.clear()
+        self.inp_remarks.clear()
+        self.inp_gender.setCurrentIndex(0)
+        self.inp_status.setCurrentIndex(0)
+        self.inp_status.setEnabled(True)
+        self.inp_status.setToolTip("")
+        self.add_photo_label.clear(); self.add_photo_label.setText("No Photo")
+        self._pending_photo = None
+        self._editing_id = None
+        self.form_title_label.setText("Add New Student")
+
+    def save_student_form(self):
+        if not self.inp_last.text().strip() or not self.inp_first.text().strip():
+            QMessageBox.warning(self, "Required", "Last Name and First Name are required.")
+            return
+        payload = {
+            "last_name":  self.inp_last.text().strip(),
+            "first_name": self.inp_first.text().strip(),
+            "gender":     self.inp_gender.currentText(),
+            "grade":      self.inp_grade.text(),
+            "address":    self.inp_address.text(),
+            "city":       self.inp_city.text(),
+            "area":       self.inp_area.text(),
+            "birthday":   self.inp_bday.text(),
+            "sponsor":    self.inp_sponsor.text(),
+            "contact":    self.inp_contact.text(),
+            "school":     self.inp_school.text(),
+            "parents":    self.inp_parents.text(),
+            "course":     self.inp_course.text(),
+            "remarks":    self.inp_remarks.toPlainText(),
+            "status":     self.inp_status.currentText(),
+        }
+        editing = self._editing_id
+        pending_photo = self._pending_photo
+        self.save_form_btn.setEnabled(False)
+        self.status_bar.showMessage("Saving student...", 30000)
+
+        def save():
+            if editing:
+                self.student_repository.update_student(editing, payload)
+                student_id = editing
+            else:
+                rows = self.student_repository.insert_student(payload)
+                if not rows or "id" not in rows[0]:
+                    raise RuntimeError("The database did not return the new student ID.")
+                student_id = rows[0]["id"]
+
+            if pending_photo:
+                url = self._upload_photo(pending_photo, student_id)
+                self.student_repository.update_photo_url(student_id, url)
+                self._cache_uploaded_photo(pending_photo, url)
+            return student_id, bool(editing)
+
+        def saved(result):
+            student_id, was_editing = result
+            self.save_form_btn.setEnabled(True)
+            self._clear_form()
+            if was_editing:
+                self.current_student_id = student_id
+                self._load_profile(student_id)
+                self._switch_page(2)
+            else:
+                self.nav_students()
+            self.refresh_dashboard()
+            self.status_bar.showMessage("Student saved", 4000)
+
+        def failed(error):
+            self.save_form_btn.setEnabled(True)
+            logging.getLogger(__name__).error("Student save failed:\n%s", error)
+            self.status_bar.showMessage("Student save failed", 5000)
+            QMessageBox.critical(self, "Save Error", error.strip().splitlines()[-1])
+
+        self._run_background(save, saved, failed)
+
+    # ── EXPENSES ──────────────────────────────────────────────────────────────
+    def open_expenses_screen(self):
+        if not self.current_student_id: return
+        try:
+            s = self.student_repository.get_student_single(self.current_student_id, columns="last_name,first_name")
+            self.expenses_title.setText(f"Expenses - {s['last_name']}, {s['first_name']}")
+            self.load_expenses()
+            self.load_budget()
+            self._switch_page(4)
+        except Exception as e:
+            self.status_bar.showMessage(f"Error ({type(e).__name__}): {e}", 8000)
+
+    def _on_sy_changed(self):
+        """Called when school year filter changes; reload expenses and budget."""
+        sy = self.exp_school_year.currentText()
+        if sy != "All Years":
+            idx = self.exp_sy_entry.findText(sy)
+            if idx >= 0:
+                self.exp_sy_entry.setCurrentIndex(idx)
+        self.load_expenses()
+        self.load_budget()
+
+    def load_expenses(self):
+        self.expenses_table.setRowCount(0)
+        if not self.current_student_id:
+            return
+        try:
+            sy_filter = self.exp_school_year.currentText()
+            rows = self.expense_service.list_expenses(self.current_student_id, sy_filter)
+            total = self.expense_service.calculate_total(rows)
+            for exp in rows:
+                row_idx = self.expenses_table.rowCount()
+                self.expenses_table.insertRow(row_idx)
+                self.expenses_table.setItem(row_idx, 0, QTableWidgetItem(exp.get("description", "")))
+                amount = exp.get("amount", 0) or 0
+                self.expenses_table.setItem(row_idx, 1, QTableWidgetItem(f"{amount:,.2f}"))
+                self.expenses_table.setItem(row_idx, 2, QTableWidgetItem(exp.get("date") or ""))
+                self.expenses_table.setItem(row_idx, 3, QTableWidgetItem(exp.get("school_year") or ""))
+                del_btn = QPushButton("Delete")
+                del_btn.setObjectName("DangerBtn")
+                del_btn.setMinimumHeight(32)
+                del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                expense_id = exp["id"]
+                del_btn.clicked.connect(lambda _, e=expense_id: self.delete_expense(e))
+                self.expenses_table.setCellWidget(row_idx, 4, del_btn)
+            self.total_label.setText(self.expense_service.total_label(total, sy_filter))
+            self._update_budget_bar(total)
+        except Exception as e:
+            self.status_bar.showMessage(f"Load error ({type(e).__name__}): {e}", 8000)
+
+    def load_budget(self):
+        """Load budget for current student + selected school year and update UI."""
+        sy = self.exp_school_year.currentText()
+        if sy == "All Years" or not self.current_student_id:
+            self.budget_input.clear()
+            self.budget_bar.setValue(0)
+            self.budget_status_lbl.setText("Select a specific school year to set/view a budget.")
+            self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+            self.budget_input.setEnabled(False)
+            return
+        self.budget_input.setEnabled(True)
+        try:
+            budget = self.expense_service.get_budget(self.current_student_id, sy)
+            if budget and budget.get("amount"):
+                amount = budget.get("amount") or 0
+                self.budget_input.setText(f"{amount:,.2f}")
+            else:
+                self.budget_input.clear()
+                self.budget_status_lbl.setText("No budget set for this school year.")
+                self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+                self.budget_bar.setValue(0)
+        except Exception as e:
+            self.status_bar.showMessage(f"Load error ({type(e).__name__}): {e}", 8000)
+
+    def _update_budget_bar(self, total_spent):
+        """Update the progress bar and status label based on budget vs spent."""
+        sy = self.exp_school_year.currentText()
+        if sy == "All Years" or not self.current_student_id:
+            self.budget_bar.setValue(0)
+            self.budget_status_lbl.setText("Select a specific school year to view budget progress.")
+            self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+            return
+        try:
+            budget = self.expense_service.get_budget(self.current_student_id, sy)
+            if not budget or not budget.get("amount"):
+                self.budget_bar.setValue(0)
+                self.budget_status_lbl.setText("No budget set. Enter a budget above and click Save.")
+                self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+                return
+            usage = self.expense_service.budget_usage(total_spent, budget.get("amount"))
+            self.budget_bar.setValue(usage["percent"])
+            colour = usage["colour"]
+            self.budget_bar.setStyleSheet(f"""
+                QProgressBar {{ border: none; border-radius: 9px; background: #e0e0e0; }}
+                QProgressBar::chunk {{ border-radius: 9px; background: {colour}; }}
+            """)
+            self.budget_status_lbl.setText(usage["message"])
+            self.budget_status_lbl.setStyleSheet(f"font-size:12px; color:{colour}; font-weight:bold;")
+        except Exception as e:
+            print(f"Budget bar error: {e}")
+
+    def save_budget(self):
+        """Upsert budget for current student + school year."""
+        sy = self.exp_school_year.currentText()
+        if sy == "All Years":
+            QMessageBox.warning(self, "Budget", "Please select a specific school year before saving a budget.")
+            return
+        try:
+            amount = self.expense_service.parse_amount(self.budget_input.text())
+        except ValueError:
+            self.status_bar.showMessage("Invalid budget amount", 4000)
+            return
+        try:
+            self.expense_service.save_budget(self.current_student_id, sy, amount)
+            self.status_bar.showMessage(f"Budget saved: PHP {amount:,.2f} for {sy}", 4000)
+            self.load_expenses()
+        except Exception as e:
+            self.status_bar.showMessage(f"Budget save error: {e}", 8000)
+
+    def add_expense(self):
+        if not self.current_student_id:
+            QMessageBox.information(self, "Select Student", "Please select a student before adding an expense.")
+            return
+        desc = self.exp_desc.text().strip()
+        if not desc:
+            self.status_bar.showMessage("Description is required", 4000)
+            return
+        try:
+            amount = self.expense_service.parse_amount(self.exp_amount.text())
+        except ValueError:
+            self.status_bar.showMessage("Invalid amount - enter a number like 250.00", 4000)
+            return
+        school_year = self.exp_sy_entry.currentText()
+        expense_date = self.exp_date.date().toString("yyyy-MM-dd")
+        try:
+            self.expense_service.add_expense(
+                self.current_student_id, desc, amount, expense_date, school_year
+            )
+            self.exp_desc.clear()
+            self.exp_amount.clear()
+            self.exp_date.setDate(QDate.currentDate())
+            if self.exp_school_year.currentText() not in ("All Years", school_year):
+                self.exp_school_year.setCurrentText(school_year)
+            self.load_expenses()
+            self.status_bar.showMessage("Expense added", 4000)
+        except Exception as e:
+            QMessageBox.critical(self, "Add Expense Failed", f"Could not add expense:\n({type(e).__name__}) {e}")
+
+    def delete_expense(self, eid):
+        try:
+            self.expense_service.delete_expense(eid)
+            self.load_expenses()
+        except Exception as e:
+            self.status_bar.showMessage(f"Error ({type(e).__name__}): {e}", 8000)
+
+    def export_all_students_to_excel(self):
+        old_mode = self.student_list_mode
+        old_status = self.filter_status.currentText()
+        old_name = self.search_name.text()
+        old_sponsor = self.search_sponsor.text()
+        old_grade = self.filter_grade.currentText()
+        old_area = self.area_select.currentText()
+        widgets = (self.filter_status, self.search_name, self.search_sponsor, self.filter_grade, self.area_select)
+
+        try:
+            for widget in widgets:
+                widget.blockSignals(True)
+            self.student_list_mode = "all"
+            self.filter_status.setCurrentText("All")
+            self.search_name.clear()
+            self.search_sponsor.clear()
+            self.filter_grade.setCurrentText("All Grades")
+            self.export_to_excel()
+        finally:
+            self.student_list_mode = old_mode
+            self.filter_status.setCurrentText(old_status)
+            self.search_name.setText(old_name)
+            self.search_sponsor.setText(old_sponsor)
+            self.filter_grade.setCurrentText(old_grade)
+            if old_area:
+                area_index = self.area_select.findText(old_area)
+                if area_index >= 0:
+                    self.area_select.setCurrentIndex(area_index)
+            for widget in widgets:
+                widget.blockSignals(False)
+
+    def export_to_excel(self):
+        """Export the currently visible (filtered) student list to an .xlsx file."""
+        try:
+            columns = (
+                "last_name,first_name,gender,grade,address,city,area,"
+                "birthday,sponsor,contact,school,parents,course,remarks,status"
+            )
+            name_q = self.search_name.text().strip()
+            sponsor_q = self.search_sponsor.text().strip()
+            area_q = self.area_select.currentText().strip() if self.student_list_mode == "areas" else ""
+            rows = self.student_repository.search_students(
+                columns=columns,
+                name_query=name_q or None,
+                sponsor_query=sponsor_q or None,
+                area=area_q if area_q and area_q != "Choose Area" else None,
+                area_exact=True,
+                order_by=["area", "last_name"],
+            )
+            rows = self._filter_current_master_rows(rows)
+            rows = self.student_list_service.filter_rows(
+                rows,
+                status=self.filter_status.currentText(),
+                grade=self.filter_grade.currentText(),
+            )
+
+            if not rows:
+                QMessageBox.information(self, "Export", "No students to export with current filters.")
+                return
+
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Excel File",
+                "SSM_Students_Export.xlsx",
+                "Excel Files (*.xlsx)",
+            )
+            if not path:
+                return
+
+            exported = self.student_excel_service.export_students(rows, path)
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                f"Exported {exported} students to:\n{path}",
+            )
+            self.status_bar.showMessage(f"Exported {exported} students", 5000)
+        except Exception as e:
+            QMessageBox.critical(self, "Export Failed", f"({type(e).__name__}) {e}")
+    def import_from_excel(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Excel File",
+            "",
+            "Excel Files (*.xlsx *.xls)",
+        )
+        if not path:
+            return
+        try:
+            sheet_name, imported = self.student_excel_service.import_students(path)
+            QMessageBox.information(
+                self,
+                "Import Complete",
+                f"Imported {imported} students from '{sheet_name}'.",
+            )
+            self.load_student_list()
+            self.refresh_dashboard()
+        except Exception as e:
+            QMessageBox.critical(self, "Import Failed", f"({type(e).__name__}) {e}")
+
+# Batch insert in chunks of 50
+            chunk_size = 50
+            for i in range(0, len(records), chunk_size):
+                self.student_repository.insert_students(records[i:i+chunk_size])
+
+            QMessageBox.information(self, "Import Complete", f"Imported {len(records)} students from '{sheet_name}'.")
+            self.load_student_list()
+            self.refresh_dashboard()
+        except Exception as e:
+            QMessageBox.critical(self, "Import Failed", f"({type(e).__name__}) {e}")
+
+
+# ── ENTRY POINT ───────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    logo_path = resource_path(LOGO_ASSET)
+    if os.path.exists(logo_path):
+        app.setWindowIcon(QIcon(logo_path))
+
+    # 1. Create Supabase client
+    sb = get_supabase()
+
+    # 2. Show startup splash — user picks their name, then we connect
+    splash = StartupDialog()
+    splash.queue_ping(sb)
+    result = splash.exec()
+
+    if result == QDialog.DialogCode.Rejected and not splash.success:
+        QMessageBox.warning(
+            None, "Offline Mode",
+            "Could not reach Supabase.\n\nThe app will open, but data may not load correctly.\n\n"
+            f"Error: {splash.error_msg}"
+        )
+
+    # 3. Launch main window
+    window = StudentApp(sb, initial_user=splash.selected_user)
+    window.show()
+    sys.exit(app.exec())
