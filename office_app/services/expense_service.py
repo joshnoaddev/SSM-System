@@ -141,7 +141,7 @@ class ExpenseService:
         percent = cls.calculate_budget_percentage(spent, budget)
         remaining = budget - spent
         over_budget = spent > budget
-        colour = cls.budget_colour(percent)
+        state = cls.budget_state(percent)
 
         if over_budget:
             message = (
@@ -161,17 +161,17 @@ class ExpenseService:
             "percent": percent,
             "remaining": remaining,
             "over_budget": over_budget,
-            "colour": "#d32f2f" if over_budget else colour,
+            "state": "danger" if over_budget else state,
             "message": message,
         }
 
     @staticmethod
-    def budget_colour(percent: int) -> str:
+    def budget_state(percent: int) -> str:
         if percent >= 100:
-            return "#d32f2f"
+            return "danger"
         if percent >= 75:
-            return "#f57c00"
-        return "#43a047"
+            return "warning"
+        return "success"
 
     @classmethod
     def total_label(cls, total: Any, school_year: Optional[str] = ALL_YEARS) -> str:
@@ -187,4 +187,3 @@ class ExpenseService:
     @classmethod
     def _is_all_years(cls, school_year: Optional[str]) -> bool:
         return str(school_year or "").strip() == cls.ALL_YEARS
-

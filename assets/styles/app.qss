@@ -41,6 +41,7 @@ QPushButton { min-height: 20px; padding: @space_xs @space_md; border: 1px solid 
 QPushButton:hover { background: @primary_hover; border-color: @primary_hover; }
 QPushButton:pressed, QPushButton:checked { background: @primary_pressed; border-color: @primary_pressed; }
 QPushButton:disabled { background: @border_subtle; border-color: @border_subtle; color: @text_disabled; }
+QPushButton[density="compact"] { min-height: 20px; padding: @space_xxs @space_sm; border-radius: 6px; font-size: 12px; }
 QPushButton#SecondaryBtn, QPushButton[variant="secondary"] { background: @surface; border-color: @border; color: @text_primary; }
 QPushButton#SecondaryBtn:hover, QPushButton[variant="secondary"]:hover { background: @surface_subtle; border-color: @primary; color: @primary; }
 QPushButton#SecondaryBtn:pressed, QPushButton#SecondaryBtn:checked, QPushButton[variant="secondary"]:pressed { background: @primary_soft; border-color: @primary; color: @primary_pressed; }
@@ -132,10 +133,12 @@ QLabel#StatusLabel[status="graduated"] { color: @graduated; }
 /* Tables */
 QTableView, QTableWidget { border: 1px solid @border_subtle; border-radius: 8px; background: @surface; alternate-background-color: @surface_subtle; color: @text_primary; gridline-color: transparent; outline: none; selection-background-color: @primary_selected; selection-color: @text_primary; }
 QTableView::item, QTableWidget::item { padding: 8px; border-bottom: 1px solid @border_subtle; }
+QTableWidget#ExpensesTable::item { padding: 4px; }
 QTableView::item:hover, QTableWidget::item:hover { background: @primary_soft; }
 QTableView::item:selected, QTableWidget::item:selected { background: @primary_selected; color: @text_primary; }
 QHeaderView::section { padding: 8px 12px; border: none; border-bottom: 1px solid @border; background: @surface_subtle; color: @text_secondary; font-size: 12px; font-weight: 700; }
 QTableWidget QLineEdit, QTableWidget QLineEdit:focus { min-height: 24px; padding: 4px 8px; border: 2px solid @primary; border-radius: 4px; background: @surface; }
+QWidget#TableActionCell { background: transparent; }
 
 /* Progress and semantic state */
 QProgressBar#BudgetProgress { border: none; border-radius: 8px; background: @border_subtle; }

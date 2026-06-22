@@ -51,10 +51,10 @@ class StudentService:
         normalized = str(status or "Active").strip()
         folded = normalized.lower()
         if folded in {"inactive/removed", "inactive", "removed"}:
-            return "Inactive/Removed", "Inactive", "#ba2525"
+            return "Inactive/Removed", "Inactive", "danger"
         if folded == "graduated":
-            return "Graduated", "Graduated", "#6b46c1"
-        return "Active", "Active", "#2f855a"
+            return "Graduated", "Graduated", "graduated"
+        return "Active", "Active", "success"
 
     status_style = _status_style
 
@@ -94,4 +94,3 @@ class StudentService:
         return int((filled / len(fields_to_check)) * 100) if fields_to_check else 0
 
     profile_completion_percent = _profile_completion_percent
-

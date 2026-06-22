@@ -1241,11 +1241,21 @@ class StudentApp(QMainWindow):
         filter_row.addWidget(QLabel("Status:"))
         filter_row.addWidget(self.filter_status)
         filter_row.addStretch()
-        filter_row.addWidget(clear_btn)
-        filter_row.addWidget(import_btn)
-        filter_row.addWidget(export_btn)
-        filter_row.addWidget(refresh_btn)
         f_layout.addLayout(filter_row)
+
+        filter_actions = QHBoxLayout()
+        filter_actions.setSpacing(Spacing.XS)
+        filter_actions.addWidget(clear_btn)
+        filter_actions.addWidget(refresh_btn)
+        filter_actions.addStretch()
+        f_layout.addLayout(filter_actions)
+
+        file_actions = QHBoxLayout()
+        file_actions.setSpacing(Spacing.XS)
+        file_actions.addWidget(import_btn)
+        file_actions.addWidget(export_btn)
+        file_actions.addStretch()
+        f_layout.addLayout(file_actions)
         
         layout.addWidget(filter_card)
 
@@ -1306,10 +1316,12 @@ class StudentApp(QMainWindow):
         self.photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.change_photo_btn = QPushButton("Change Photo"); self.change_photo_btn.setObjectName("SecondaryBtn")
         self.change_photo_btn.clicked.connect(self.change_photo)
-        self.change_photo_btn.setFixedWidth(160)
+        self.change_photo_btn.setMinimumWidth(176)
+        self.change_photo_btn.setMaximumWidth(200)
         self.remove_photo_btn = QPushButton("Remove Photo"); self.remove_photo_btn.setObjectName("DangerBtn")
         self.remove_photo_btn.clicked.connect(self.remove_photo)
-        self.remove_photo_btn.setFixedWidth(160)
+        self.remove_photo_btn.setMinimumWidth(176)
+        self.remove_photo_btn.setMaximumWidth(200)
         self.remove_photo_btn.setVisible(False)
         pcol.addWidget(self.photo_label)
         pcol.addWidget(self.change_photo_btn)
@@ -1561,7 +1573,8 @@ class StudentApp(QMainWindow):
         self.budget_input.setMinimumHeight(34)
         save_budget_btn = QPushButton("Save Budget")
         save_budget_btn.setMinimumHeight(34)
-        save_budget_btn.setMaximumWidth(130)
+        save_budget_btn.setMinimumWidth(192)
+        save_budget_btn.setMaximumWidth(200)
         save_budget_btn.clicked.connect(self.save_budget)
         budget_hdr.addWidget(self.budget_input)
         budget_hdr.addWidget(save_budget_btn)
@@ -1630,6 +1643,7 @@ class StudentApp(QMainWindow):
         table_layout.setContentsMargins(16, 16, 16, 16)
         table_layout.setSpacing(8)
         self.expenses_table = QTableWidget(0, 5)
+        self.expenses_table.setObjectName("ExpensesTable")
         self.expenses_table.setHorizontalHeaderLabels(["Description", "Amount (PHP)", "Date", "School Year", ""])
         self.expenses_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.expenses_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
@@ -1640,7 +1654,8 @@ class StudentApp(QMainWindow):
         self.expenses_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.expenses_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.expenses_table.setMinimumHeight(260)
-        self.expenses_table.verticalHeader().setDefaultSectionSize(36)
+        self.expenses_table.verticalHeader().setMinimumSectionSize(40)
+        self.expenses_table.verticalHeader().setDefaultSectionSize(40)
         table_layout.addWidget(self.expenses_table)
 
         self.total_label = QLabel("Total: PHP 0.00")
@@ -1668,19 +1683,21 @@ class StudentApp(QMainWindow):
         title.setObjectName("SectionTitle")
         self.coord_search = QLineEdit()
         self.coord_search.setPlaceholderText("Search by name, location, email…")
-        self.coord_search.setFixedWidth(280)
+        self.coord_search.setMinimumWidth(280)
         self.coord_search.textChanged.connect(self._filter_coordinators)
-        add_coord_btn = QPushButton("Add Coordinator")
+        add_coord_btn = ActionButton("Add Coordinator")
         add_coord_btn.clicked.connect(self._add_coordinator_dialog)
-        refresh_coord_btn = QPushButton("Refresh")
-        refresh_coord_btn.setObjectName("SecondaryBtn")
+        refresh_coord_btn = ActionButton("Refresh", variant="secondary")
         refresh_coord_btn.clicked.connect(self.load_coordinators)
         top_bar.addWidget(title)
         top_bar.addStretch()
-        top_bar.addWidget(self.coord_search)
         top_bar.addWidget(add_coord_btn)
         top_bar.addWidget(refresh_coord_btn)
         layout.addLayout(top_bar)
+
+        search_row = QHBoxLayout()
+        search_row.addWidget(self.coord_search, 1)
+        layout.addLayout(search_row)
 
         # Table
         self.coord_table = QTableWidget()
@@ -1905,18 +1922,26 @@ class StudentApp(QMainWindow):
             QStyle.StandardPixmap.SP_FileIcon,
         )
 
-        file_actions = QHBoxLayout()
-        file_actions.setSpacing(8)
+        file_primary_actions = QHBoxLayout()
+        file_primary_actions.setSpacing(Spacing.XS)
         for button in (
             self.workbook_open_saved_btn,
             self.workbook_choose_btn,
             self.workbook_save_btn,
+        ):
+            file_primary_actions.addWidget(button)
+        file_primary_actions.addStretch()
+
+        file_secondary_actions = QHBoxLayout()
+        file_secondary_actions.setSpacing(Spacing.XS)
+        for button in (
             self.workbook_reload_btn,
             self.workbook_excel_btn,
         ):
-            file_actions.addWidget(button)
-        file_actions.addStretch()
-        info_layout.addLayout(file_actions)
+            file_secondary_actions.addWidget(button)
+        file_secondary_actions.addStretch()
+        info_layout.addLayout(file_primary_actions)
+        info_layout.addLayout(file_secondary_actions)
         layout.addWidget(info_card)
 
         toolbar = QWidget()
@@ -1946,15 +1971,20 @@ class StudentApp(QMainWindow):
         self.workbook_sync_all_btn = workbook_btn("Sync All", self.sync_all_workbook_sheets_to_supabase, "SecondaryBtn")
         self.workbook_export_btn = workbook_btn("Export Students", self.export_all_students_to_excel, "SecondaryBtn")
 
-        action_row = QHBoxLayout()
-        action_row.setSpacing(8)
-        action_row.addWidget(self.workbook_add_column_btn)
-        action_row.addWidget(self.workbook_delete_column_btn)
-        action_row.addStretch()
-        action_row.addWidget(self.workbook_sync_current_btn)
-        action_row.addWidget(self.workbook_sync_all_btn)
-        action_row.addWidget(self.workbook_export_btn)
-        toolbar_layout.addLayout(action_row)
+        column_action_row = QHBoxLayout()
+        column_action_row.setSpacing(Spacing.XS)
+        column_action_row.addWidget(self.workbook_add_column_btn)
+        column_action_row.addWidget(self.workbook_delete_column_btn)
+        column_action_row.addStretch()
+        toolbar_layout.addLayout(column_action_row)
+
+        sync_action_row = QHBoxLayout()
+        sync_action_row.setSpacing(Spacing.XS)
+        sync_action_row.addWidget(self.workbook_sync_current_btn)
+        sync_action_row.addWidget(self.workbook_sync_all_btn)
+        sync_action_row.addWidget(self.workbook_export_btn)
+        sync_action_row.addStretch()
+        toolbar_layout.addLayout(sync_action_row)
         layout.addWidget(toolbar)
 
         empty_actions = QWidget()
@@ -2712,7 +2742,7 @@ class StudentApp(QMainWindow):
                 self.list_widget.addItem(item)
 
     def _student_list_item(self, student, indent=False):
-        full_status, status, status_color = self._status_style(student.get("status"))
+        full_status, status, status_token = self._status_style(student.get("status"))
         status_icon = "●"
         g = str(student.get("gender") or "").strip().upper()
         gender = f" ({g})" if g else ""
@@ -2724,7 +2754,7 @@ class StudentApp(QMainWindow):
 
         item = QListWidgetItem(label)
         item.setData(Qt.ItemDataRole.UserRole, student["id"])
-        item.setForeground(QColor(status_color))
+        item.setForeground(theme_color(status_token))
         return item
 
     def _add_student_list_item(self, student, indent=False):
@@ -2768,7 +2798,7 @@ class StudentApp(QMainWindow):
         return row
 
     def _student_card_widget(self, student, indent=False):
-        full_status, status_text, status_color = self._status_style(student.get("status"))
+        full_status, status_text, _status_token = self._status_style(student.get("status"))
         first = student.get("first_name") or ""
         last = student.get("last_name") or ""
         gender = str(student.get("gender") or "").strip().upper()
@@ -2896,7 +2926,7 @@ class StudentApp(QMainWindow):
         try:
             student = self.student_repository.get_student_single(sid)
             s = self._apply_current_master_status(student)
-            full_status, short_status, status_color = self._status_style(s.get("status"))
+            full_status, short_status, _status_token = self._status_style(s.get("status"))
             inactive = (full_status != "Active")
             
             # 1. Update Buttons and Status
@@ -3281,18 +3311,23 @@ class StudentApp(QMainWindow):
             for exp in rows:
                 row_idx = self.expenses_table.rowCount()
                 self.expenses_table.insertRow(row_idx)
+                self.expenses_table.setRowHeight(row_idx, 40)
                 self.expenses_table.setItem(row_idx, 0, QTableWidgetItem(exp.get("description", "")))
                 amount = exp.get("amount", 0) or 0
                 self.expenses_table.setItem(row_idx, 1, QTableWidgetItem(f"{amount:,.2f}"))
                 self.expenses_table.setItem(row_idx, 2, QTableWidgetItem(exp.get("date") or ""))
                 self.expenses_table.setItem(row_idx, 3, QTableWidgetItem(exp.get("school_year") or ""))
-                del_btn = QPushButton("Delete")
-                del_btn.setObjectName("DangerBtn")
-                del_btn.setMinimumHeight(32)
-                del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                del_btn = ActionButton("Delete", variant="danger")
+                del_btn.setProperty("density", "compact")
                 expense_id = exp["id"]
                 del_btn.clicked.connect(lambda _, e=expense_id: self.delete_expense(e))
-                self.expenses_table.setCellWidget(row_idx, 4, del_btn)
+                action_cell = QWidget()
+                action_cell.setObjectName("TableActionCell")
+                action_layout = QHBoxLayout(action_cell)
+                action_layout.setContentsMargins(0, 0, 0, 0)
+                action_layout.setSpacing(0)
+                action_layout.addWidget(del_btn)
+                self.expenses_table.setCellWidget(row_idx, 4, action_cell)
             self.total_label.setText(self.expense_service.total_label(total, sy_filter))
             self._update_budget_bar(total)
         except Exception as e:
