@@ -54,6 +54,50 @@ from office_app.services.student_list_service import StudentListService
 from office_app.services.workbook_import_service import WorkbookImportService
 
 
+# QSS has no native CSS custom properties. These tokens are expanded when the
+# stylesheet is loaded, giving the application one authoritative color palette.
+DESIGN_TOKENS = {
+    "primary": "#155EEF",
+    "primary_hover": "#0B4DD8",
+    "primary_pressed": "#0A3FAF",
+    "primary_soft": "#EFF4FF",
+    "primary_selected": "#D1E0FF",
+    "secondary": "#475467",
+    "app_background": "#F5F7FA",
+    "surface": "#FFFFFF",
+    "surface_subtle": "#F9FAFB",
+    "text_primary": "#101828",
+    "text_secondary": "#475467",
+    "text_disabled": "#98A2B3",
+    "border": "#D0D5DD",
+    "border_subtle": "#EAECF0",
+    "success": "#067647",
+    "success_hover": "#05603A",
+    "success_pressed": "#054F31",
+    "success_soft": "#ECFDF3",
+    "warning": "#B54708",
+    "warning_hover": "#93370D",
+    "warning_pressed": "#792E0D",
+    "warning_soft": "#FFFAEB",
+    "danger": "#B42318",
+    "danger_hover": "#912018",
+    "danger_pressed": "#7A271A",
+    "danger_soft": "#FEF3F2",
+    "graduated": "#6938EF",
+    "graduated_soft": "#F4F3FF",
+    "on_brand": "#FFFFFF",
+    "splash_start": "#0A3FAF",
+    "splash_end": "#1570EF",
+}
+
+
+def render_qss(template: str) -> str:
+    """Expand @token references because Qt QSS does not support variables."""
+    for name, value in DESIGN_TOKENS.items():
+        template = template.replace(f"@{name}", value)
+    return template
+
+
 
 
 
@@ -79,11 +123,11 @@ def set_logo_pixmap(label, width, height, fallback_text="\u271d"):
     label.setFixedSize(width, height)
     if pix.isNull():
         label.setText(fallback_text)
-        label.setStyleSheet("font-size: 30px; font-weight: 800; color: white;")
+        label.setObjectName("BrandLogoFallback")
         return
     pix = trim_transparent_pixmap(pix)
     label.setPixmap(pix.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-    label.setStyleSheet("background: transparent;")
+    label.setObjectName("BrandLogo")
 
 
 # ── SIGNALS (used to safely call UI from background threads) ──────────────────
@@ -104,7 +148,7 @@ class StartupDialog(QDialog):
         QDialog QWidget { background: transparent; }
         QDialog QWidget#SplashPanel {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #0b3f8c, stop:0.58 #0b63ce, stop:1 #1a8fd1);
+                stop:0 @splash_start, stop:0.58 @primary, stop:1 @splash_end);
             border: 1px solid rgba(255,255,255,0.22);
             border-radius: 24px;
         }
@@ -122,8 +166,8 @@ class StartupDialog(QDialog):
             background: rgba(255,255,255,0.12);
             color: rgba(255,255,255,0.94);
             border: 1.5px solid rgba(255,255,255,0.40);
-            border-radius: 14px;
-            padding: 13px 10px;
+            border-radius: 16px;
+            padding: 12px 8px;
             font-size: 13px;
             font-weight: 700;
         }
@@ -134,33 +178,33 @@ class StartupDialog(QDialog):
         }
         QDialog QPushButton#UserBtn:checked {
             background: white;
-            color: #0b4aa0;
+            color: @primary_pressed;
             border: 2px solid white;
             font-weight: 800;
         }
 
         QDialog QPushButton#ContinueBtn {
             background: white;
-            color: #0b4aa0;
+            color: @primary_pressed;
             border: none;
             border-radius: 22px;
             padding: 0px;
             font-size: 14px;
             font-weight: 800;
         }
-        QDialog QPushButton#ContinueBtn:hover { background: #eef6ff; color: #073b7a; }
-        QDialog QPushButton#ContinueBtn:pressed { background: #bfdbfe; }
+        QDialog QPushButton#ContinueBtn:hover { background: @primary_soft; color: @primary_pressed; }
+        QDialog QPushButton#ContinueBtn:pressed { background: @primary_selected; }
 
         QDialog QPushButton#RetryBtn {
-            background: white; color: #0b3f8c; border: none;
-            border-radius: 20px; padding: 10px 28px;
+            background: white; color: @primary_pressed; border: none;
+            border-radius: 20px; padding: 8px 24px;
             font-weight: 700; font-size: 13px;
         }
-        QDialog QPushButton#RetryBtn:hover { background: #dbeafe; }
+        QDialog QPushButton#RetryBtn:hover { background: @primary_selected; }
         QDialog QPushButton#OfflineBtn {
             background: rgba(255,255,255,0.12); color: white;
             border: 1.5px solid rgba(255,255,255,0.35);
-            border-radius: 20px; padding: 10px 28px;
+            border-radius: 20px; padding: 8px 24px;
             font-weight: 700; font-size: 13px;
         }
         QDialog QPushButton#OfflineBtn:hover { background: rgba(255,255,255,0.22); }
@@ -180,7 +224,7 @@ class StartupDialog(QDialog):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         # Apply stylesheet AFTER setting flags; prepend * reset to override app-level QPushButton
-        ss = "* { font-family: 'Segoe UI', Arial, sans-serif; }\n" + self._SPLASH_SS
+        ss = "* { font-family: 'Segoe UI', Arial, sans-serif; }\n" + render_qss(self._SPLASH_SS)
         self.setStyleSheet(ss)
 
         self.success = False
@@ -198,7 +242,7 @@ class StartupDialog(QDialog):
 
         # ── Root stacked layout (page 0 = user select, page 1 = connecting) ──
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
+        root.setContentsMargins(8, 8, 8, 8)
 
         panel = QWidget()
         panel.setObjectName("SplashPanel")
@@ -224,7 +268,7 @@ class StartupDialog(QDialog):
         page = QWidget()
         page.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(48, 34, 48, 30)
+        lay.setContentsMargins(48, 32, 48, 32)
         lay.setSpacing(0)
 
         logo_lbl = QLabel()
@@ -304,7 +348,7 @@ class StartupDialog(QDialog):
         page = QWidget()
         page.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(52, 42, 52, 34)
+        lay.setContentsMargins(48, 40, 48, 32)
         lay.setSpacing(0)
 
         logo_lbl = QLabel()
@@ -338,7 +382,7 @@ class StartupDialog(QDialog):
 
         self.status_label = QLabel("Connecting to database")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("font-size: 13px; color: rgba(255,255,255,0.88); font-weight: 600; margin-bottom: 10px;")
+        self.status_label.setStyleSheet("font-size: 13px; color: rgba(255,255,255,0.88); font-weight: 600; margin-bottom: 8px;")
         lay.addWidget(self.status_label)
 
         lay.addSpacing(14)
@@ -415,7 +459,7 @@ class StartupDialog(QDialog):
         self.status_label.setText("Could not reach database")
         connect_page = self._stack.widget(1)
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
+        btn_row.setSpacing(8)
         retry_btn   = QPushButton("Retry")
         offline_btn = QPushButton("Continue Offline")
         retry_btn.setObjectName("RetryBtn")
@@ -449,15 +493,15 @@ class CircularProgress(QWidget):
         rect = QRectF(margin, margin, self.width() - (margin * 2), self.height() - (margin * 2))
         
         # Draw background track
-        pen_bg = QPen(QColor("#e2e8f0"), pen_width)
+        pen_bg = QPen(QColor(DESIGN_TOKENS["border_subtle"]), pen_width)
         painter.setPen(pen_bg)
         painter.drawArc(rect, 0, 360 * 16)
         
         # Determine color based on completion
-        if self.value == 100: color = "#43a047"      # Green
-        elif self.value >= 75: color = "#1976d2"     # Blue
-        elif self.value >= 50: color = "#f57c00"     # Orange
-        else: color = "#d32f2f"                      # Red
+        if self.value == 100: color = DESIGN_TOKENS["success"]
+        elif self.value >= 75: color = DESIGN_TOKENS["primary"]
+        elif self.value >= 50: color = DESIGN_TOKENS["warning"]
+        else: color = DESIGN_TOKENS["danger"]
         
         # Draw progress arc
         pen_fg = QPen(QColor(color), pen_width)
@@ -467,7 +511,7 @@ class CircularProgress(QWidget):
         painter.drawArc(rect, 90 * 16, -span_angle) # Start at top (90 degrees)
         
         # Draw percentage text
-        painter.setPen(QColor("#243b53"))
+        painter.setPen(QColor(DESIGN_TOKENS["text_primary"]))
         font = painter.font()
         font.setPixelSize(max(8, int(self.width() * 0.19)))
         font.setBold(True)
@@ -536,12 +580,12 @@ class StudentApp(QMainWindow):
         content_widget = QWidget()
         content_widget.setObjectName("MainContent")
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(28, 22, 28, 22)
+        content_layout.setContentsMargins(32, 24, 32, 24)
         content_layout.setSpacing(16)
 
         # Header
         header_layout = QVBoxLayout()
-        header_layout.setSpacing(2)
+        header_layout.setSpacing(4)
         app_title = QLabel("SSM Student Profiling System")
         app_title.setObjectName("HeaderTitle")
         app_subtitle = QLabel("YWAM Balut Student Sponsorship Ministry")
@@ -553,8 +597,8 @@ class StudentApp(QMainWindow):
         
         # Divider
         divider = QFrame()
+        divider.setObjectName("Divider")
         divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("border: none; background-color: #e8edf3; max-height: 1px;")
         content_layout.addWidget(divider)
 
         # Stacked Widget for Screens
@@ -632,7 +676,7 @@ class StudentApp(QMainWindow):
         qss_path = resource_path(os.path.join("assets", "styles", "app.qss"))
         try:
             with open(qss_path, "r", encoding="utf-8") as file:
-                self.setStyleSheet(file.read())
+                self.setStyleSheet(render_qss(file.read()))
         except Exception as e:
             print(f"Stylesheet load error: {e}")
 
@@ -642,25 +686,27 @@ class StudentApp(QMainWindow):
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setFixedWidth(230)
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(0, 0, 0, 20)
-        sidebar_layout.setSpacing(6)
+        sidebar_layout.setContentsMargins(0, 0, 0, 24)
+        sidebar_layout.setSpacing(8)
 
         # Brand header
         brand_container = QWidget()
-        brand_container.setStyleSheet("background-color: #0b63ce; color: white;")
-        brand_container.setFixedHeight(166)
+        brand_container.setObjectName("BrandPanel")
+        brand_container.setFixedHeight(168)
         brand_layout = QVBoxLayout(brand_container)
+        brand_layout.setContentsMargins(16, 16, 16, 16)
+        brand_layout.setSpacing(4)
         brand_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         logo_lbl = QLabel()
         set_logo_pixmap(logo_lbl, 104, 78)
         
         self.brand_lbl = QLabel("Joshua")
-        self.brand_lbl.setStyleSheet("font-size: 20px; font-weight: 800; color: white; letter-spacing: 2px;")
+        self.brand_lbl.setObjectName("BrandTitle")
         self.brand_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         brand_sub = QLabel("SSM Portal")
-        brand_sub.setStyleSheet("font-size: 13px; color: #e3f2fd; font-weight: 600;")
+        brand_sub.setObjectName("BrandSubtitle")
         brand_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         brand_layout.addWidget(logo_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -668,7 +714,7 @@ class StudentApp(QMainWindow):
         brand_layout.addWidget(brand_sub, alignment=Qt.AlignmentFlag.AlignHCenter)
         
         sidebar_layout.addWidget(brand_container)
-        sidebar_layout.addSpacing(15)
+        sidebar_layout.addSpacing(16)
 
         self.btn_dash = QPushButton("Dashboard")
         self.btn_stud = QPushButton("Students")
@@ -695,18 +741,18 @@ class StudentApp(QMainWindow):
 
         # User selector
         user_label = QLabel("Logged in as")
-        user_label.setStyleSheet("color: #8a9bb0; font-size: 11px; padding-left: 12px;")
+        user_label.setObjectName("SidebarCaption")
         self.user_combo = QComboBox()
         self.user_combo.addItems(USERS)
         idx = self.user_combo.findText(self._initial_user)
         if idx >= 0:
             self.user_combo.setCurrentIndex(idx)
         self.brand_lbl.setText(self._initial_user)
-        self.user_combo.setStyleSheet("margin: 0 10px;")
+        self.user_combo.setObjectName("SidebarUserCombo")
         self.user_combo.currentTextChanged.connect(self._on_user_changed)
         sidebar_layout.addWidget(user_label)
         sidebar_layout.addWidget(self.user_combo)
-        sidebar_layout.addSpacing(6)
+        sidebar_layout.addSpacing(8)
 
         self.sidebar_refresh_btn = QPushButton("Refresh")
         self.sidebar_refresh_btn.setObjectName("SidebarRefreshBtn")
@@ -829,20 +875,20 @@ class StudentApp(QMainWindow):
         else:           greeting = "Good evening"
 
         hello_card = QWidget()
-        hello_card.setObjectName("Card")
-        hello_card.setStyleSheet("QWidget#Card { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #1a237e, stop:1 #1976d2); border-radius: 12px; border: none; }")
+        hello_card.setObjectName("GreetingCard")
         h_layout = QVBoxLayout(hello_card)
-        h_layout.setContentsMargins(24, 18, 24, 18)
+        h_layout.setContentsMargins(24, 16, 24, 16)
+        h_layout.setSpacing(4)
         self.greet_lbl = QLabel(f"{greeting}, {self._initial_user}")
-        self.greet_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: white;")
+        self.greet_lbl.setObjectName("OnBrandTitle")
         sub_lbl   = QLabel("Today's overview for students, sponsors, and records.")
-        sub_lbl.setStyleSheet("font-size: 12px; color: rgba(255,255,255,0.80);")
+        sub_lbl.setObjectName("OnBrandCaption")
         h_layout.addWidget(self.greet_lbl)
         h_layout.addWidget(sub_lbl)
         layout.addWidget(hello_card)
 
         overview_lbl = QLabel("Overview")
-        overview_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #333; margin-top: 4px;")
+        overview_lbl.setObjectName("SectionTitle")
         layout.addWidget(overview_lbl)
 
         cards_row = QHBoxLayout()
@@ -853,10 +899,10 @@ class StudentApp(QMainWindow):
         self.lbl_inactive_val = QLabel("--"); self.lbl_inactive_val.setObjectName("CardValue")
         self.lbl_graduated_val = QLabel("--"); self.lbl_graduated_val.setObjectName("CardValue")
 
-        cards_row.addWidget(self._build_card("Total Students",    self.lbl_total_val,    "#0b63ce"), 1)
-        cards_row.addWidget(self._build_card("Active Students",   self.lbl_active_val,   "#2f855a"), 1)
-        cards_row.addWidget(self._build_card("Inactive Students", self.lbl_inactive_val, "#d64545"), 1)
-        cards_row.addWidget(self._build_card("Graduated Students", self.lbl_graduated_val, "#6b46c1"), 1)
+        cards_row.addWidget(self._build_card("Total Students", self.lbl_total_val, "primary"), 1)
+        cards_row.addWidget(self._build_card("Active Students", self.lbl_active_val, "success"), 1)
+        cards_row.addWidget(self._build_card("Inactive Students", self.lbl_inactive_val, "danger"), 1)
+        cards_row.addWidget(self._build_card("Graduated Students", self.lbl_graduated_val, "graduated"), 1)
 
         layout.addLayout(cards_row)
 
@@ -872,14 +918,14 @@ class StudentApp(QMainWindow):
         layout.addLayout(insights_row, 1)
         self.stacked_widget.addWidget(widget)
 
-    def _build_card(self, title_text, value_label, accent_color="#0b63ce"):
+    def _build_card(self, title_text, value_label, tone="primary"):
         card = QWidget()
         card.setObjectName("Card")
-        card.setFixedHeight(118)
-        card.setStyleSheet(f"QWidget#Card {{ border-left: 4px solid {accent_color}; }}")
+        card.setProperty("tone", tone)
+        card.setFixedHeight(120)
         l = QVBoxLayout(card)
-        l.setContentsMargins(22, 18, 22, 18)
-        l.setSpacing(6)
+        l.setContentsMargins(24, 16, 24, 16)
+        l.setSpacing(8)
         t = QLabel(title_text)
         t.setObjectName("CardTitle")
         l.addWidget(t)
@@ -891,8 +937,8 @@ class StudentApp(QMainWindow):
         card.setObjectName("Card")
         card.setMinimumHeight(260)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
 
         title = QLabel(title_text)
         title.setObjectName("CardTitle")
@@ -1037,19 +1083,21 @@ class StudentApp(QMainWindow):
             item = QListWidgetItem("All visible records look complete.")
             item.setData(Qt.ItemDataRole.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            item.setForeground(QColor("#627d98"))
+            item.setForeground(QColor(DESIGN_TOKENS["text_secondary"]))
             self.dashboard_attention_list.addItem(item)
     # ── SCREEN 1: LIST ────────────────────────────────────────────────────────
     def create_list_screen(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
 
         # Filters Card
         filter_card = QWidget()
         filter_card.setObjectName("Card")
         f_layout = QVBoxLayout(filter_card)
-        f_layout.setContentsMargins(16, 14, 16, 14)
-        f_layout.setSpacing(10)
+        f_layout.setContentsMargins(16, 16, 16, 16)
+        f_layout.setSpacing(16)
         
         mode_bar = QHBoxLayout()
         mode_bar.setSpacing(8)
@@ -1067,7 +1115,7 @@ class StudentApp(QMainWindow):
         f_layout.addLayout(mode_bar)
 
         search_row = QHBoxLayout()
-        search_row.setSpacing(10)
+        search_row.setSpacing(8)
         self.search_name    = QLineEdit(); self.search_name.setPlaceholderText("Search name")
         self.search_name.setMinimumWidth(180)
         self.search_name.textChanged.connect(self.load_student_list)
@@ -1079,7 +1127,7 @@ class StudentApp(QMainWindow):
         f_layout.addLayout(search_row)
 
         filter_row = QHBoxLayout()
-        filter_row.setSpacing(10)
+        filter_row.setSpacing(8)
         self.filter_grade = QComboBox()
         self.filter_grade.addItem("All Grades")
         self.filter_grade.currentTextChanged.connect(self.load_student_list)
@@ -1123,18 +1171,8 @@ class StudentApp(QMainWindow):
         layout.addWidget(filter_card)
 
         self.count_label = QLabel("Choose All Students or Areas to view records.")
+        self.count_label.setObjectName("CountBanner")
         self.count_label.setMinimumHeight(42)
-        self.count_label.setStyleSheet("""
-            QLabel {
-                background: #ffffff;
-                border: 1px solid #d9e2ec;
-                border-radius: 8px;
-                padding: 10px 14px;
-                font-size: 14px;
-                font-weight: 800;
-                color: #102a43;
-            }
-        """)
         layout.addWidget(self.count_label)
 
         self.list_widget = QListWidget()
@@ -1157,7 +1195,7 @@ class StudentApp(QMainWindow):
         widget = QWidget()
         outer = QVBoxLayout(widget)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(14)
+        outer.setSpacing(16)
 
         top_bar = QHBoxLayout()
         back_btn = QPushButton("Back"); back_btn.setObjectName("SecondaryBtn")
@@ -1173,15 +1211,15 @@ class StudentApp(QMainWindow):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         content = QWidget(); content.setObjectName("Card")
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(28, 26, 28, 26)
-        layout.setSpacing(20)
+        layout.setContentsMargins(32, 24, 32, 24)
+        layout.setSpacing(24)
 
         top_row = QHBoxLayout()
-        top_row.setSpacing(22)
+        top_row.setSpacing(24)
         
         # Left side: Photo
         pcol = QVBoxLayout()
-        pcol.setSpacing(10)
+        pcol.setSpacing(8)
         pcol.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.photo_label = QLabel("No Photo")
         self.photo_label.setFixedSize(140, 170)
@@ -1202,16 +1240,16 @@ class StudentApp(QMainWindow):
         # Middle: Info (native QGridLayout)
         info_layout = QVBoxLayout()
         info_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        info_layout.setSpacing(14)
+        info_layout.setSpacing(16)
         
         # Header Row: Name & Status
         self.lbl_profile_name = QLabel("Student Name")
-        self.lbl_profile_name.setStyleSheet("font-size: 28px; font-weight: 800; color: #102a43;")
+        self.lbl_profile_name.setObjectName("ProfileTitle")
         self.lbl_profile_name.setWordWrap(True)
         self.lbl_profile_status = QLabel("Active")
+        self.lbl_profile_status.setObjectName("StatusLabel")
         self.lbl_profile_status.setMinimumHeight(28)
         self.lbl_profile_status.setTextFormat(Qt.TextFormat.RichText)
-        self.lbl_profile_status.setStyleSheet("font-size: 15px; font-weight: 700;")
         
         info_layout.addWidget(self.lbl_profile_name)
         info_layout.addWidget(self.lbl_profile_status)
@@ -1221,8 +1259,8 @@ class StudentApp(QMainWindow):
         # competing for width on the same row, so this never forces a
         # horizontal scrollbar, no matter how the window is resized.
         self.profile_grid = QGridLayout()
-        self.profile_grid.setHorizontalSpacing(22)
-        self.profile_grid.setVerticalSpacing(13)
+        self.profile_grid.setHorizontalSpacing(24)
+        self.profile_grid.setVerticalSpacing(16)
         self.profile_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.profile_grid.setColumnMinimumWidth(0, 110)  # Label column
         self.profile_grid.setColumnStretch(1, 1)          # Value column fills the rest
@@ -1250,7 +1288,7 @@ class StudentApp(QMainWindow):
         add_grid_item(5, "Birthday:", "birthday")
         add_grid_item(6, "Contact:", "contact")
         add_grid_item(7, "Sponsor:", "sponsor")
-        self.profile_data_labels["sponsor"].setStyleSheet("color: #102a43; font-size: 16px; font-weight: 800;")
+        self.profile_data_labels["sponsor"].setProperty("emphasis", True)
         
         add_grid_item(8, "School:", "school")
         add_grid_item(9, "Parents:", "parents")
@@ -1265,8 +1303,8 @@ class StudentApp(QMainWindow):
         progress_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.profile_progress = CircularProgress()
         progress_lbl = QLabel("Profile\nCompletion")
+        progress_lbl.setObjectName("CaptionStrong")
         progress_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        progress_lbl.setStyleSheet("font-size: 12px; color: #627d98; font-weight: 700;")
         progress_layout.addWidget(self.profile_progress, alignment=Qt.AlignmentFlag.AlignCenter)
         progress_layout.addWidget(progress_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
         top_row.addLayout(progress_layout)
@@ -1274,13 +1312,13 @@ class StudentApp(QMainWindow):
         layout.addLayout(top_row)
 
         divider = QFrame()
+        divider.setObjectName("Divider")
         divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("color: #e8edf3; background-color: #e8edf3; max-height: 1px;")
         layout.addWidget(divider)
 
         # Remarks (grows to fill any leftover space instead of leaving a dead gap)
         remarks_lbl = QLabel("Remarks")
-        remarks_lbl.setStyleSheet("font-size: 14px; font-weight: 800; color: #102a43;")
+        remarks_lbl.setObjectName("CardHeading")
         layout.addWidget(remarks_lbl)
         self.remarks_edit = QTextEdit()
         self.remarks_edit.setMinimumHeight(120)
@@ -1302,19 +1340,22 @@ class StudentApp(QMainWindow):
     def create_add_screen(self):
         widget = QWidget()
         outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(16)
 
         top_bar = QHBoxLayout()
         cancel_btn = QPushButton("Cancel"); cancel_btn.setObjectName("SecondaryBtn")
         cancel_btn.clicked.connect(self.nav_students)
         self.form_title_label = QLabel("Add New Student")
-        self.form_title_label.setStyleSheet("font-size:18px; font-weight:bold; color: #1976d2;")
+        self.form_title_label.setObjectName("SectionTitle")
         top_bar.addWidget(cancel_btn); top_bar.addWidget(self.form_title_label); top_bar.addStretch()
         outer.addLayout(top_bar)
 
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         content = QWidget(); content.setObjectName("Card")
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
 
         photo_row = QHBoxLayout()
         self.add_photo_label = QLabel("No Photo")
@@ -1327,7 +1368,7 @@ class StudentApp(QMainWindow):
         layout.addLayout(photo_row)
 
         form = QFormLayout()
-        form.setSpacing(14)
+        form.setSpacing(16)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
         self.inp_last    = QLineEdit()
@@ -1387,7 +1428,7 @@ class StudentApp(QMainWindow):
         inner = QWidget()
         inner.setObjectName("MainContent")
         layout = QVBoxLayout(inner)
-        layout.setSpacing(10)
+        layout.setSpacing(16)
         layout.setContentsMargins(0, 0, 0, 0)
 
         # Top bar
@@ -1395,16 +1436,17 @@ class StudentApp(QMainWindow):
         back_btn = QPushButton("Back"); back_btn.setObjectName("SecondaryBtn")
         back_btn.clicked.connect(lambda: self._switch_page(2))
         self.expenses_title = QLabel()
-        self.expenses_title.setStyleSheet("font-size:18px; font-weight:bold; color: #1976d2;")
+        self.expenses_title.setObjectName("SectionTitle")
         top_bar.addWidget(back_btn); top_bar.addWidget(self.expenses_title); top_bar.addStretch()
         layout.addLayout(top_bar)
 
         # School year selector
         sy_card = QWidget(); sy_card.setObjectName("Card")
         sy_layout = QHBoxLayout(sy_card)
-        sy_layout.setContentsMargins(16, 10, 16, 10)
+        sy_layout.setContentsMargins(16, 16, 16, 16)
+        sy_layout.setSpacing(8)
         sy_lbl = QLabel("School Year:")
-        sy_lbl.setStyleSheet("font-size:13px; font-weight:bold;")
+        sy_lbl.setObjectName("FieldLabel")
         self.exp_school_year = QComboBox()
         import datetime
         sy_list = [f"{y}-{y+1}" for y in range(2020, 2032)]
@@ -1424,12 +1466,12 @@ class StudentApp(QMainWindow):
         # ── Budget card ────────────────────────────────────────────────────
         budget_card = QWidget(); budget_card.setObjectName("Card")
         budget_main = QVBoxLayout(budget_card)
-        budget_main.setContentsMargins(20, 14, 20, 14)
+        budget_main.setContentsMargins(16, 16, 16, 16)
         budget_main.setSpacing(8)
 
         budget_hdr = QHBoxLayout()
         budget_icon_lbl = QLabel("Budget Allocated")
-        budget_icon_lbl.setStyleSheet("font-size:14px; font-weight:bold; color:#333;")
+        budget_icon_lbl.setObjectName("CardHeading")
         budget_hdr.addWidget(budget_icon_lbl)
         budget_hdr.addStretch()
 
@@ -1452,23 +1494,22 @@ class StudentApp(QMainWindow):
         self.budget_bar.setValue(0)
         self.budget_bar.setTextVisible(False)
         self.budget_bar.setFixedHeight(18)
-        self.budget_bar.setStyleSheet("""
-            QProgressBar { border: none; border-radius: 9px; background: #e0e0e0; }
-            QProgressBar::chunk { border-radius: 9px; background: #43a047; }
-        """)
+        self.budget_bar.setObjectName("BudgetProgress")
+        self.budget_bar.setProperty("state", "success")
         budget_main.addWidget(self.budget_bar)
 
         self.budget_status_lbl = QLabel("No budget set for this school year.")
-        self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+        self.budget_status_lbl.setObjectName("BudgetStatus")
         budget_main.addWidget(self.budget_status_lbl)
         layout.addWidget(budget_card)
 
         # Add expense card
         add_card = QWidget(); add_card.setObjectName("Card")
         add_layout = QVBoxLayout(add_card)
-        add_layout.setContentsMargins(16, 12, 16, 12)
+        add_layout.setContentsMargins(16, 16, 16, 16)
+        add_layout.setSpacing(8)
         add_hdr = QLabel("Add New Expense")
-        add_hdr.setStyleSheet("font-size:13px; font-weight:bold; color:#555; margin-bottom:4px;")
+        add_hdr.setObjectName("CardHeading")
         add_layout.addWidget(add_hdr)
 
         add_grid = QGridLayout()
@@ -1507,7 +1548,8 @@ class StudentApp(QMainWindow):
         # Expenses table
         table_card = QWidget(); table_card.setObjectName("Card")
         table_layout = QVBoxLayout(table_card)
-        table_layout.setContentsMargins(16, 12, 16, 12)
+        table_layout.setContentsMargins(16, 16, 16, 16)
+        table_layout.setSpacing(8)
         self.expenses_table = QTableWidget(0, 5)
         self.expenses_table.setHorizontalHeaderLabels(["Description", "Amount (PHP)", "Date", "School Year", ""])
         self.expenses_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -1515,6 +1557,7 @@ class StudentApp(QMainWindow):
         self.expenses_table.horizontalHeader().setStretchLastSection(False)
         self.expenses_table.verticalHeader().setVisible(False)
         self.expenses_table.setAlternatingRowColors(True)
+        self.expenses_table.setShowGrid(False)
         self.expenses_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.expenses_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.expenses_table.setMinimumHeight(260)
@@ -1522,7 +1565,7 @@ class StudentApp(QMainWindow):
         table_layout.addWidget(self.expenses_table)
 
         self.total_label = QLabel("Total: PHP 0.00")
-        self.total_label.setStyleSheet("font-size:16px; font-weight:bold; color:#333; margin-top:6px;")
+        self.total_label.setObjectName("TotalLabel")
         table_layout.addWidget(self.total_label, alignment=Qt.AlignmentFlag.AlignRight)
         layout.addWidget(table_card)
 
@@ -1536,7 +1579,8 @@ class StudentApp(QMainWindow):
     def create_coordinators_screen(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setSpacing(14)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # Header bar
@@ -1569,6 +1613,7 @@ class StudentApp(QMainWindow):
         self.coord_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.coord_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.coord_table.setAlternatingRowColors(True)
+        self.coord_table.setShowGrid(False)
         self.coord_table.verticalHeader().setVisible(False)
         self.coord_table.setWordWrap(True)
         self.coord_table.verticalHeader().setDefaultSectionSize(48)
@@ -1581,7 +1626,7 @@ class StudentApp(QMainWindow):
         layout.addWidget(self.coord_table, 1)
 
         self.coord_status = QLabel("")
-        self.coord_status.setStyleSheet("color:#627d98; font-size:12px;")
+        self.coord_status.setObjectName("Caption")
         layout.addWidget(self.coord_status)
 
         self._coord_all_rows = []  # cache for filtering
@@ -1634,8 +1679,8 @@ class StudentApp(QMainWindow):
         dlg.setWindowTitle(title)
         dlg.setMinimumWidth(420)
         form = QFormLayout(dlg)
-        form.setSpacing(10)
-        form.setContentsMargins(20, 20, 20, 20)
+        form.setSpacing(8)
+        form.setContentsMargins(24, 24, 24, 24)
         fields = {}
         for label, key in [("Location", "location"), ("Contact Person", "contact_person"),
                             ("Email", "email"), ("Contact No.", "contact_no"),
@@ -1706,11 +1751,12 @@ class StudentApp(QMainWindow):
     def create_workbook_screen(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        layout.setSpacing(12)
+        layout.setSpacing(16)
 
         header_row = QHBoxLayout()
-        header_row.setSpacing(10)
+        header_row.setSpacing(8)
         title = QLabel("Workbook")
         title.setObjectName("SectionTitle")
         self.workbook_state_badge = QLabel("No Workbook")
@@ -1733,8 +1779,8 @@ class StudentApp(QMainWindow):
         info_card = QWidget()
         info_card.setObjectName("Card")
         info_layout = QVBoxLayout(info_card)
-        info_layout.setContentsMargins(16, 12, 16, 12)
-        info_layout.setSpacing(10)
+        info_layout.setContentsMargins(16, 16, 16, 16)
+        info_layout.setSpacing(8)
 
         self.workbook_path_label = QLabel("No workbook loaded")
         self.workbook_path_label.setObjectName("WorkbookFileLabel")
@@ -1792,7 +1838,7 @@ class StudentApp(QMainWindow):
         toolbar = QWidget()
         toolbar.setObjectName("WorkbookToolbar")
         toolbar_layout = QVBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(12, 10, 12, 10)
+        toolbar_layout.setContentsMargins(16, 16, 16, 16)
         toolbar_layout.setSpacing(8)
 
         sheet_row = QHBoxLayout()
@@ -1830,11 +1876,11 @@ class StudentApp(QMainWindow):
         self.workbook_empty_card = QWidget()
         self.workbook_empty_card.setObjectName("Card")
         empty_layout = QVBoxLayout(self.workbook_empty_card)
-        empty_layout.setContentsMargins(28, 36, 28, 36)
+        empty_layout.setContentsMargins(32, 32, 32, 32)
         empty_layout.setSpacing(12)
         empty_title = QLabel("No workbook loaded")
+        empty_title.setObjectName("EmptyStateTitle")
         empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_title.setStyleSheet("font-size: 20px; font-weight: 800; color: #102a43;")
         empty_btn_row = QHBoxLayout()
         empty_btn_row.addStretch()
         empty_saved_btn = QPushButton("Open Saved")
@@ -2464,7 +2510,7 @@ class StudentApp(QMainWindow):
         item = QListWidgetItem("Select a view above to load student records.")
         item.setData(Qt.ItemDataRole.UserRole, None)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-        item.setForeground(QColor("#627d98"))
+        item.setForeground(QColor(DESIGN_TOKENS["text_secondary"]))
         self.list_widget.addItem(item)
 
     def show_area_choice_prompt(self):
@@ -2475,7 +2521,7 @@ class StudentApp(QMainWindow):
             item = QListWidgetItem("No areas found.")
             item.setData(Qt.ItemDataRole.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            item.setForeground(QColor("#627d98"))
+            item.setForeground(QColor(DESIGN_TOKENS["text_secondary"]))
             self.list_widget.addItem(item)
             return
 
@@ -2579,8 +2625,8 @@ class StudentApp(QMainWindow):
             header = QListWidgetItem(f"{area}  ({len(students)})")
             header.setData(Qt.ItemDataRole.UserRole, None)
             header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled)
-            header.setForeground(QColor("#102a43"))
-            header.setBackground(QColor("#e4f0ff"))
+            header.setForeground(QColor(DESIGN_TOKENS["text_primary"]))
+            header.setBackground(QColor(DESIGN_TOKENS["primary_soft"]))
             font = header.font()
             font.setBold(True)
             header.setFont(font)
@@ -2620,46 +2666,16 @@ class StudentApp(QMainWindow):
 
     def _area_choice_widget(self, area, count_text):
         row = QWidget()
+        row.setObjectName("AreaChoice")
         row.setFixedHeight(86)
         row.setCursor(Qt.CursorShape.PointingHandCursor)
         row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        row.setStyleSheet("""
-            QWidget {
-                background: transparent;
-            }
-            QLabel#AreaName {
-                color: #102a43;
-                font-size: 15px;
-                font-weight: 800;
-                min-height: 20px;
-            }
-            QLabel#AreaCount {
-                color: #0b63ce;
-                background: #e4f0ff;
-                border: 1px solid #c8ddf5;
-                border-radius: 12px;
-                padding: 4px 10px;
-                font-size: 12px;
-                font-weight: 800;
-            }
-            QLabel#AreaAction {
-                color: #0b63ce;
-                font-size: 22px;
-                font-weight: 800;
-                min-width: 22px;
-            }
-            QLabel#AreaHint {
-                color: #627d98;
-                font-size: 12px;
-                min-height: 18px;
-            }
-        """)
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
         text_col = QVBoxLayout()
-        text_col.setSpacing(3)
+        text_col.setSpacing(4)
         area_label = QLabel(area)
         area_label.setObjectName("AreaName")
         hint_label = QLabel("Open this area")
@@ -2686,78 +2702,22 @@ class StudentApp(QMainWindow):
         area = student.get("area") or "--"
 
         row = QWidget()
+        row.setObjectName("StudentCard")
+        status_key = {
+            "Active": "active",
+            "Inactive/Removed": "inactive",
+            "Graduated": "graduated",
+        }.get(full_status, "inactive")
+        row.setProperty("status", status_key)
         row.setFixedHeight(144)
         row.setCursor(Qt.CursorShape.PointingHandCursor)
         row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        row.setStyleSheet(f"""
-            QWidget {{
-                background: transparent;
-            }}
-            QLabel#StatusDot {{
-                background: {status_color};
-                border-radius: 6px;
-                min-width: 12px;
-                max-width: 12px;
-                min-height: 12px;
-                max-height: 12px;
-                margin-top: 5px; /* ADJUSTED ALIGNMENT FIX */
-            }}
-            QLabel#StudentName {{
-                color: #102a43;
-                font-size: 15px;
-                font-weight: 800;
-            }}
-            QLabel#StudentMeta {{
-                color: #52606d;
-                font-size: 12px;
-            }}
-            QLabel#RemarksTitle {{
-                color: #829ab1;
-                font-size: 11px;
-                font-weight: 800;
-            }}
-            QLabel#RemarksText {{
-                color: #334e68;
-                font-size: 12px;
-                line-height: 15px;
-            }}
-            QWidget#RemarksPanel {{
-                background: #f8fafc;
-                border: 1px solid #e2e8f0;
-                border-radius: 8px;
-            }}
-            QLabel#StudentBadge {{
-                color: {status_color};
-                background: #f8fafc;
-                border: 1px solid #d9e2ec;
-                border-radius: 12px;
-                padding: 3px 10px;
-                font-size: 12px;
-                font-weight: 800;
-                min-width: 86px;
-                min-height: 30px;
-                max-height: 30px;
-            }}
-            QLabel#GradeBadge {{
-                color: #0b63ce;
-                background: #e4f0ff;
-                border: 1px solid #c8ddf5;
-                border-radius: 12px;
-                padding: 3px 10px;
-                font-size: 12px;
-                font-weight: 800;
-                min-width: 86px;
-                min-height: 30px;
-                max-height: 30px;
-            }}
-        """)
-        
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(16 + (18 if indent else 0), 12, 16, 12)
+        layout.setContentsMargins(32 if indent else 16, 12, 16, 12)
         layout.setSpacing(12)
 
         text_col = QVBoxLayout()
-        text_col.setSpacing(5)
+        text_col.setSpacing(4)
 
         # --- THE INLINE NAME ROW ---
         name_row = QHBoxLayout()
@@ -2765,7 +2725,7 @@ class StudentApp(QMainWindow):
 
         dot = QLabel()
         dot.setObjectName("StatusDot")
-        dot.setFixedSize(12, 17) # Increased slightly for 5px margin
+        dot.setFixedSize(12, 16)
 
         name_text = f"{last}, {first}".strip(", ")
         if gender:
@@ -2817,7 +2777,7 @@ class StudentApp(QMainWindow):
         remarks_panel.setMinimumWidth(300)
         remarks_panel.setMaximumWidth(500)
         remarks_layout = QVBoxLayout(remarks_panel)
-        remarks_layout.setContentsMargins(12, 9, 12, 9)
+        remarks_layout.setContentsMargins(12, 8, 12, 8)
         remarks_layout.setSpacing(4)
 
         remarks_title = QLabel("Remarks")
@@ -2829,7 +2789,7 @@ class StudentApp(QMainWindow):
         remarks_text.setToolTip(remarks or "No remarks")
 
         if not remarks:
-            remarks_text.setStyleSheet("color: #9fb3c8; font-style: italic;")
+            remarks_text.setProperty("empty", True)
 
         remarks_layout.addWidget(remarks_title)
         remarks_layout.addWidget(remarks_text, 1)
@@ -2879,11 +2839,15 @@ class StudentApp(QMainWindow):
                 self.deactivate_btn.setObjectName("DangerBtn")
                 self.deactivate_btn.style().unpolish(self.deactivate_btn)
                 self.deactivate_btn.style().polish(self.deactivate_btn)
-            self.lbl_profile_status.setText(
-                f"<span style='color:{status_color}; font-size:16px;'>●</span> "
-                f"<span style='color:{status_color};'>{full_status}</span>"
-            )
-            self.lbl_profile_status.setStyleSheet("font-size: 14px; font-weight: 800; margin-bottom: 10px;")
+            status_key = {
+                "Active": "active",
+                "Inactive/Removed": "inactive",
+                "Graduated": "graduated",
+            }.get(full_status, "inactive")
+            self.lbl_profile_status.setText(f"●  {full_status}")
+            self.lbl_profile_status.setProperty("status", status_key)
+            self.lbl_profile_status.style().unpolish(self.lbl_profile_status)
+            self.lbl_profile_status.style().polish(self.lbl_profile_status)
 
             # 2. Update Header Name
             self.lbl_profile_name.setText(f"{s.get('last_name', '')}, {s.get('first_name', '')}")
@@ -3266,7 +3230,7 @@ class StudentApp(QMainWindow):
             self.budget_input.clear()
             self.budget_bar.setValue(0)
             self.budget_status_lbl.setText("Select a specific school year to set/view a budget.")
-            self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+            self._set_budget_state("neutral")
             self.budget_input.setEnabled(False)
             return
         self.budget_input.setEnabled(True)
@@ -3278,7 +3242,7 @@ class StudentApp(QMainWindow):
             else:
                 self.budget_input.clear()
                 self.budget_status_lbl.setText("No budget set for this school year.")
-                self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+                self._set_budget_state("neutral")
                 self.budget_bar.setValue(0)
         except Exception as e:
             self.status_bar.showMessage(f"Load error ({type(e).__name__}): {e}", 8000)
@@ -3289,26 +3253,33 @@ class StudentApp(QMainWindow):
         if sy == "All Years" or not self.current_student_id:
             self.budget_bar.setValue(0)
             self.budget_status_lbl.setText("Select a specific school year to view budget progress.")
-            self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+            self._set_budget_state("neutral")
             return
         try:
             budget = self.expense_service.get_budget(self.current_student_id, sy)
             if not budget or not budget.get("amount"):
                 self.budget_bar.setValue(0)
                 self.budget_status_lbl.setText("No budget set. Enter a budget above and click Save.")
-                self.budget_status_lbl.setStyleSheet("font-size:12px; color:#777;")
+                self._set_budget_state("neutral")
                 return
             usage = self.expense_service.budget_usage(total_spent, budget.get("amount"))
             self.budget_bar.setValue(usage["percent"])
-            colour = usage["colour"]
-            self.budget_bar.setStyleSheet(f"""
-                QProgressBar {{ border: none; border-radius: 9px; background: #e0e0e0; }}
-                QProgressBar::chunk {{ border-radius: 9px; background: {colour}; }}
-            """)
             self.budget_status_lbl.setText(usage["message"])
-            self.budget_status_lbl.setStyleSheet(f"font-size:12px; color:{colour}; font-weight:bold;")
+            if usage["over_budget"] or usage["percent"] >= 100:
+                state = "danger"
+            elif usage["percent"] >= 75:
+                state = "warning"
+            else:
+                state = "success"
+            self._set_budget_state(state)
         except Exception as e:
             print(f"Budget bar error: {e}")
+
+    def _set_budget_state(self, state):
+        for widget in (self.budget_bar, self.budget_status_lbl):
+            widget.setProperty("state", state)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     def save_budget(self):
         """Upsert budget for current student + school year."""
