@@ -46,7 +46,7 @@ from office_app.ui import (
     theme_color,
 )
 from office_app.ui.views import StudentListView
-
+from office_app.services.updater_service import UpdaterService
 
 def render_qss(template: str) -> str:
     """Expand @token references because Qt QSS does not support variables."""
@@ -485,10 +485,46 @@ class StartupDialog(QDialog):
         return page
     # ── Connection logic ───────────────────────────────────────────────────────
     def start_ping(self, sb: Client):
-        # Update welcome text now that we know the user
         self.welcome_label.setText(f"Welcome, {self.selected_user}!")
         self._start_dot_anim()
+        self._pending_sb = sb  # keep ref so _on_update_checked can use it
 
+        # --- AUTO UPDATE CHECK (non-blocking) ---
+        # check_for_update() is a DB call, so it must NOT run on the main thread.
+        # We use BackgroundTask here and continue to normal boot in the callback
+        # only if no update is found.
+        self.updater = UpdaterService(sb)
+        update_task = BackgroundTask(lambda: self.updater.check_for_update())
+        update_task.signals.succeeded.connect(self._on_update_checked)
+        update_task.signals.failed.connect(
+            # If the update check itself errors, just proceed with normal boot
+            lambda _err: self._start_normal_boot(sb)
+        )
+        QThreadPool.globalInstance().start(update_task)
+
+    def _on_update_checked(self, update_info):
+        """Called on the main thread once the background update check completes."""
+        if not update_info:
+            self._start_normal_boot(self._pending_sb)
+            return
+
+        latest_version, url = update_info
+        if self._dot_timer:
+            self._dot_timer.stop()
+        self.status_label.setText(f"Update {latest_version} available! Downloading...")
+        self.progress.setRange(0, 100)
+
+        # Start the download (safely pushing UI updates back to main thread)
+        self.updater.download_and_install(
+            url=url,
+            progress_callback=lambda p: QTimer.singleShot(0, lambda: self.progress.setValue(p)),
+            success_callback=lambda: QTimer.singleShot(0, lambda: self.status_label.setText("Restarting to apply update...")),
+            error_callback=lambda err: QTimer.singleShot(0, lambda: self._signals.failed.emit(f"Update failed: {err}"))
+        )
+        # Do NOT start normal boot — we are updating and will os._exit()
+
+    def _start_normal_boot(self, sb):
+        """Kick off the normal DB ping after the update check finds nothing."""
         task = BackgroundTask(lambda: StudentRepository(client=sb).ping())
         task.signals.succeeded.connect(lambda _rows: self._signals.connected.emit())
         task.signals.failed.connect(
@@ -723,6 +759,8 @@ class StudentApp(QMainWindow):
         # Initialize Data
         self.nav_dashboard()
         self._start_keepalive()
+        # --- Start Auto-Update Poller (Checks every 5 minutes) ---
+        self._start_update_poller()
 
     def _run_background(self, function, on_success=None, on_error=None):
         """Run blocking work in Qt's managed thread pool."""
@@ -972,6 +1010,81 @@ class StudentApp(QMainWindow):
             lambda error: self.status_bar.showMessage(
                 f"Keepalive error: {error.strip().splitlines()[-1]}", 8000
             ),
+        )
+    
+    # ── LIVE AUTO-UPDATER ─────────────────────────────────────────────────────
+    def _start_update_poller(self):
+        self.update_timer = QTimer(self)
+        self.update_timer.setInterval(300000) # 5 minutes in milliseconds
+        self.update_timer.timeout.connect(self._check_for_updates_bg)
+        self.update_timer.start()
+
+    def _check_for_updates_bg(self):
+        """Silently check for updates in the background."""
+        self._run_background(
+            lambda: UpdaterService(self.sb).check_for_update(),
+            self._on_update_check_result,
+            lambda e: None # If internet drops briefly, fail silently
+        )
+
+    def _on_update_check_result(self, update_info):
+        if not update_info:
+            return
+
+        latest_version, url = update_info
+        
+        # Pause the timer so we don't spam them with popups every 5 minutes
+        self.update_timer.stop()
+
+        reply = QMessageBox.question(
+            self,
+            "Update Available",
+            f"A new version of the SSM System (v{latest_version}) has just been published!\n\nWould you like to download and install it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self._trigger_live_update(latest_version, url)
+        else:
+            # If they say no, wait 30 minutes before reminding them again
+            self.update_timer.start(1800000)
+
+    def _trigger_live_update(self, latest_version, url):
+        # 1. Safety Check: Don't restart if they have unsaved work!
+        if getattr(self, "_workbook_dirty", False):
+            QMessageBox.warning(
+                self, 
+                "Unsaved Work", 
+                "You have unsaved changes in your workbook!\n\nPlease save your workbook first, then the update prompt will reappear shortly."
+            )
+            # Check again in 1 minute
+            self.update_timer.start(60000)
+            return
+
+        # 2. Show a progress dialog overlay
+        from PyQt6.QtWidgets import QProgressDialog
+        self.update_progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
+        self.update_progress.setWindowTitle(f"Updating to v{latest_version}")
+        self.update_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self.update_progress.setAutoClose(False)
+        self.update_progress.setAutoReset(False)
+        self.update_progress.show()
+
+        # 3. Trigger the download (using the safe UI thread routing we set up earlier)
+        updater = UpdaterService(self.sb)
+
+        # Wire Cancel button to abort the download thread before it can call os._exit()
+        self.update_progress.canceled.connect(lambda: (
+            updater.cancel(),
+            self.update_progress.close(),
+            self.update_timer.start(1800000)  # Re-prompt in 30 min
+        ))
+
+        updater.download_and_install(
+            url=url,
+            progress_callback=lambda p: QTimer.singleShot(0, lambda: self.update_progress.setValue(p)),
+            success_callback=lambda: QTimer.singleShot(0, lambda: self.update_progress.setLabelText("Restarting app to apply update...")),
+            error_callback=lambda err: QTimer.singleShot(0, lambda: QMessageBox.critical(self, "Update Failed", str(err)))
         )
 
     def _update_field(self, table: str, field: str, value, record_id):
