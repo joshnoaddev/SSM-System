@@ -61,3 +61,10 @@ class CoordinatorRepository:
     def delete_all_coordinators(self) -> List[Dict[str, Any]]:
         response = self.sb.table("coordinators").delete().neq("id", 0).execute()
         return list(response.data or [])
+
+    def replace_coordinators(self, records: List[Dict[str, Any]]) -> int:
+        response = self.sb.rpc(
+            "replace_coordinators_transactional",
+            {"payload": records},
+        ).execute()
+        return int(response.data or 0)

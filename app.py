@@ -1,26 +1,11 @@
 import sys
-import subprocess
-
-
-def ensure_packages():
-    # Skip entirely when running as a compiled exe (PyInstaller) — there's no
-    # pip available inside a frozen build, and sys.executable points at the
-    # exe itself rather than a real Python interpreter.
-    if getattr(sys, "frozen", False):
-        return
-    required = ["openpyxl", "pandas", "supabase"]
-    for pkg in required:
-        try:
-            __import__(pkg)
-        except ImportError:
-            print(f"Installing {pkg}...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-
-ensure_packages()
-
 import os
 import logging
+import shutil
+import tempfile
+import threading
 import time
+from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -45,6 +30,7 @@ from office_app.services.supabase_client import get_supabase
 from office_app.utils.paths import resource_path
 from office_app.utils.background_tasks import BackgroundTask
 from office_app.repositories.coordinator_repository import CoordinatorRepository
+from office_app.repositories.audit_repository import AuditRepository
 from office_app.repositories.student_repository import StudentRepository
 from office_app.repositories.workbook_repository import WorkbookRepository
 from office_app.services.expense_service import ExpenseService
@@ -557,7 +543,7 @@ class StartupDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         retry_btn   = QPushButton("Retry")
-        offline_btn = QPushButton("Continue Offline")
+        offline_btn = QPushButton("Exit")
         retry_btn.setObjectName("RetryBtn")
         offline_btn.setObjectName("OfflineBtn")
         retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -626,6 +612,7 @@ class StudentApp(QMainWindow):
         self.photo_service = PhotoService()
         self.expense_service = ExpenseService()
         self.coordinator_repository = CoordinatorRepository()
+        self.audit_repository = AuditRepository()
         self.workbook_repository = WorkbookRepository()
         self.workbook_import_service = WorkbookImportService(
             self.student_repository,
@@ -635,11 +622,17 @@ class StudentApp(QMainWindow):
         self.masterlist_service = MasterListService(self.workbook_import_service)
         self.thread_pool = QThreadPool(self)
         self._initial_user = initial_user
+        self._current_operator = initial_user
         self.current_student_id = None
         self._pending_photo = None
         self._editing_id = None
+        self._editing_snapshot = None
         self._workbook = None
         self._workbook_path = None
+        self._workbook_mtime_ns = None
+        self._workbook_loading_request = 0
+        self._workbook_busy = False
+        self._workbook_lock = threading.RLock()
         self._loaded_workbook_sheets = set()
         self._workbook_dirty = False
         self._loading_workbook_sheet = False
@@ -713,7 +706,12 @@ class StudentApp(QMainWindow):
             status_message_fn=self.status_bar.showMessage,
         )
         self.student_list_view.student_selected.connect(self._open_student_profile)
-        self.student_list_view.students_changed.connect(self.refresh_dashboard)
+        self.student_list_view.students_changed.connect(self._on_students_changed)
+        self.student_list_view.students_imported.connect(
+            lambda count: self._audit(
+                "import", "students", details={"record_count": count}
+            )
+        )
         self.stacked_widget.addWidget(self.student_list_view)  # Index 1
         self.create_profile_screen()    # Index 2
         self.create_add_screen()        # Index 3
@@ -833,7 +831,7 @@ class StudentApp(QMainWindow):
         sidebar_layout.addStretch()
 
         # User selector
-        user_label = QLabel("Logged in as")
+        user_label = QLabel("Current operator")
         user_label.setObjectName("SidebarCaption")
         self.user_combo = QComboBox()
         self.user_combo.addItems(USERS)
@@ -884,6 +882,12 @@ class StudentApp(QMainWindow):
         self._load_profile(student_id)
         self._switch_page(2)
 
+    def _on_students_changed(self):
+        self.refresh_dashboard()
+        self.student_list_view.refresh_filter_options()
+        if self.stacked_widget.currentIndex() == 1:
+            self.student_list_view.load_student_list()
+
     def nav_add(self):
         self._set_active_nav(self.btn_add)
         self._open_add_screen()
@@ -906,10 +910,26 @@ class StudentApp(QMainWindow):
         self.load_coordinators()
 
     def _on_user_changed(self, name):
+        self._current_operator = name
         self.brand_lbl.setText(name)
         hour = time.localtime().tm_hour
         greeting = "Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
         self.greet_lbl.setText(f"{greeting}, {name}")
+
+    def _audit(self, action, entity_type, entity_id=None, details=None):
+        operator = getattr(self, "_current_operator", self._initial_user)
+        self._run_background(
+            lambda: self.audit_repository.log(
+                operator=operator,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                details=details,
+            ),
+            on_error=lambda error: logging.getLogger(__name__).error(
+                "Audit log failed: %s", error.strip().splitlines()[-1]
+            ),
+        )
 
     def _sidebar_refresh(self):
         button = getattr(self, "sidebar_refresh_btn", None)
@@ -1085,10 +1105,11 @@ class StudentApp(QMainWindow):
 
         return self._run_background(fetch_rows, apply_rows, show_error)
     def _filter_current_master_rows(self, rows):
-        return self.masterlist_service.filter_current_rows(
-            rows,
-            self._current_master_student_reference(),
-        )
+        with self._workbook_lock:
+            return self.masterlist_service.filter_current_rows(
+                rows,
+                self._current_master_student_reference(),
+            )
 
     def _apply_current_master_status(self, row):
         return self.masterlist_service.apply_current_status(
@@ -1755,7 +1776,7 @@ class StudentApp(QMainWindow):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        layout.setSpacing(16)
+        layout.setSpacing(8)
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
@@ -1780,23 +1801,31 @@ class StudentApp(QMainWindow):
                 button.setObjectName(object_name)
             if icon is not None:
                 button.setIcon(self.style().standardIcon(icon))
+            button.setProperty("density", "compact")
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(slot)
             return button
 
-        info_card = Card()
-        info_layout = QVBoxLayout(info_card)
-        info_layout.setContentsMargins(16, 16, 16, 16)
-        info_layout.setSpacing(8)
+        controls = Card()
+        controls.setObjectName("WorkbookToolbar")
+        controls_layout = QVBoxLayout(controls)
+        controls_layout.setContentsMargins(12, 10, 12, 10)
+        controls_layout.setSpacing(6)
+
+        file_row = QHBoxLayout()
+        file_row.setSpacing(Spacing.XS)
+        file_meta = QVBoxLayout()
+        file_meta.setSpacing(2)
 
         self.workbook_path_label = QLabel("No workbook loaded")
         self.workbook_path_label.setObjectName("WorkbookFileLabel")
-        self.workbook_path_label.setWordWrap(True)
+        self.workbook_path_label.setWordWrap(False)
         self.workbook_status_label = QLabel("No workbook selected.")
         self.workbook_status_label.setObjectName("WorkbookPathLabel")
-        self.workbook_status_label.setWordWrap(True)
-        info_layout.addWidget(self.workbook_path_label)
-        info_layout.addWidget(self.workbook_status_label)
+        self.workbook_status_label.setWordWrap(False)
+        file_meta.addWidget(self.workbook_path_label)
+        file_meta.addWidget(self.workbook_status_label)
+        file_row.addLayout(file_meta, 1)
 
         self.workbook_open_saved_btn = workbook_btn(
             "Open Saved",
@@ -1828,36 +1857,18 @@ class StudentApp(QMainWindow):
             QStyle.StandardPixmap.SP_FileIcon,
         )
 
-        file_primary_actions = QHBoxLayout()
-        file_primary_actions.setSpacing(Spacing.XS)
         for button in (
             self.workbook_open_saved_btn,
             self.workbook_choose_btn,
             self.workbook_save_btn,
-        ):
-            file_primary_actions.addWidget(button)
-        file_primary_actions.addStretch()
-
-        file_secondary_actions = QHBoxLayout()
-        file_secondary_actions.setSpacing(Spacing.XS)
-        for button in (
             self.workbook_reload_btn,
             self.workbook_excel_btn,
         ):
-            file_secondary_actions.addWidget(button)
-        file_secondary_actions.addStretch()
-        info_layout.addLayout(file_primary_actions)
-        info_layout.addLayout(file_secondary_actions)
-        layout.addWidget(info_card)
-
-        toolbar = QWidget()
-        toolbar.setObjectName("WorkbookToolbar")
-        toolbar_layout = QVBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(16, 16, 16, 16)
-        toolbar_layout.setSpacing(8)
+            file_row.addWidget(button)
+        controls_layout.addLayout(file_row)
 
         sheet_row = QHBoxLayout()
-        sheet_row.setSpacing(8)
+        sheet_row.setSpacing(Spacing.XS)
         sheet_lbl = QLabel("Sheet")
         sheet_lbl.setObjectName("ToolbarLabel")
         self.workbook_sheet_combo = QComboBox()
@@ -1869,7 +1880,7 @@ class StudentApp(QMainWindow):
         sheet_row.addWidget(sheet_lbl)
         sheet_row.addWidget(self.workbook_sheet_combo)
         sheet_row.addWidget(self.workbook_sheet_summary_label, 1)
-        toolbar_layout.addLayout(sheet_row)
+        controls_layout.addLayout(sheet_row)
 
         self.workbook_add_column_btn = workbook_btn("Insert Column", self.insert_workbook_column, "SecondaryBtn")
         self.workbook_delete_column_btn = workbook_btn("Delete Column", self.delete_workbook_column, "DangerBtn")
@@ -1881,21 +1892,16 @@ class StudentApp(QMainWindow):
             "SecondaryBtn",
         )
 
-        column_action_row = QHBoxLayout()
-        column_action_row.setSpacing(Spacing.XS)
-        column_action_row.addWidget(self.workbook_add_column_btn)
-        column_action_row.addWidget(self.workbook_delete_column_btn)
-        column_action_row.addStretch()
-        toolbar_layout.addLayout(column_action_row)
-
-        sync_action_row = QHBoxLayout()
-        sync_action_row.setSpacing(Spacing.XS)
-        sync_action_row.addWidget(self.workbook_sync_current_btn)
-        sync_action_row.addWidget(self.workbook_sync_all_btn)
-        sync_action_row.addWidget(self.workbook_export_btn)
-        sync_action_row.addStretch()
-        toolbar_layout.addLayout(sync_action_row)
-        layout.addWidget(toolbar)
+        action_row = QHBoxLayout()
+        action_row.setSpacing(Spacing.XS)
+        action_row.addWidget(self.workbook_add_column_btn)
+        action_row.addWidget(self.workbook_delete_column_btn)
+        action_row.addStretch()
+        action_row.addWidget(self.workbook_sync_current_btn)
+        action_row.addWidget(self.workbook_sync_all_btn)
+        action_row.addWidget(self.workbook_export_btn)
+        controls_layout.addLayout(action_row)
+        layout.addWidget(controls)
 
         empty_actions = QWidget()
         empty_actions.setObjectName("EmptyStateActions")
@@ -1942,12 +1948,24 @@ class StudentApp(QMainWindow):
         ):
             button = getattr(self, button_name, None)
             if button is not None:
-                button.setEnabled(has_workbook)
+                button.setEnabled(has_workbook and not self._workbook_busy)
         if hasattr(self, "workbook_save_btn"):
-            self.workbook_save_btn.setEnabled(has_workbook and self._workbook_dirty)
+            self.workbook_save_btn.setEnabled(
+                has_workbook and self._workbook_dirty and not self._workbook_busy
+            )
         if hasattr(self, "workbook_sheet_combo"):
-            self.workbook_sheet_combo.setEnabled(has_workbook and self.workbook_tabs.count() > 0)
+            self.workbook_sheet_combo.setEnabled(
+                has_workbook and self.workbook_tabs.count() > 0 and not self._workbook_busy
+            )
+        if hasattr(self, "workbook_tabs"):
+            self.workbook_tabs.setEnabled(not self._workbook_busy)
         self._refresh_workbook_state_badge()
+
+    def _set_workbook_busy(self, busy, message=""):
+        self._workbook_busy = busy
+        self._refresh_workbook_controls()
+        if message:
+            self.status_bar.showMessage(message, 30000 if busy else 4000)
 
     def _refresh_workbook_state_badge(self):
         if not hasattr(self, "workbook_state_badge"):
@@ -2044,15 +2062,36 @@ class StudentApp(QMainWindow):
 
     def load_workbook_tabs(self, path):
         if not path:
-            return
+            return False
+        if self._workbook_dirty and os.path.abspath(path) != os.path.abspath(self._workbook_path or ""):
+            decision = QMessageBox.question(
+                self,
+                "Unsaved Workbook Changes",
+                "Save the current workbook before opening another file?",
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No |
+                QMessageBox.StandardButton.Cancel,
+            )
+            if decision == QMessageBox.StandardButton.Cancel:
+                return False
+            if decision == QMessageBox.StandardButton.Yes and not self.save_workbook_tabs():
+                return False
         try:
             from openpyxl import load_workbook
 
-            if self._workbook and hasattr(self._workbook, "close"):
-                self._workbook.close()
-
-            self._workbook = load_workbook(path, read_only=False, data_only=False)
+            keep_vba = os.path.splitext(path)[1].lower() in (".xlsm", ".xltm")
+            new_workbook = load_workbook(
+                path,
+                read_only=False,
+                data_only=False,
+                keep_vba=keep_vba,
+            )
+            with self._workbook_lock:
+                if self._workbook and hasattr(self._workbook, "close"):
+                    self._workbook.close()
+                self._workbook = new_workbook
             self._workbook_path = path
+            self._workbook_mtime_ns = os.stat(path).st_mtime_ns
             self._settings().setValue("workbook_path", path)
             self._loaded_workbook_sheets.clear()
             self._workbook_dirty = False
@@ -2099,8 +2138,10 @@ class StudentApp(QMainWindow):
             if self.workbook_tabs.count():
                 self.workbook_tabs.setCurrentIndex(0)
                 self._load_workbook_sheet(0)
+            return True
         except Exception as e:
             QMessageBox.critical(self, "Workbook Error", f"Could not open workbook:\n({type(e).__name__}) {e}")
+            return False
 
     def _on_workbook_tab_changed(self, index):
         if index < 0:
@@ -2111,7 +2152,6 @@ class StudentApp(QMainWindow):
             self.workbook_sheet_combo.setCurrentIndex(index)
             self.workbook_sheet_combo.blockSignals(False)
         self._load_workbook_sheet(index)
-        self._update_workbook_sheet_summary(index)
 
     def _current_workbook_table(self):
         if not hasattr(self, "workbook_tabs"):
@@ -2133,7 +2173,7 @@ class StudentApp(QMainWindow):
             table.setColumnWidth(col, 150)
 
     def _load_workbook_sheet(self, index):
-        if not self._workbook or index < 0:
+        if not self._workbook or index < 0 or self._workbook_busy:
             return
         sheet_name = self.workbook_tabs.tabText(index)
         if sheet_name in self._loaded_workbook_sheets:
@@ -2141,45 +2181,87 @@ class StudentApp(QMainWindow):
             return
 
         table = self.workbook_tabs.widget(index)
+        self._workbook_loading_request += 1
+        request_id = self._workbook_loading_request
         self._loading_workbook_sheet = True
         table.blockSignals(True)
+        table.setEnabled(False)
         table.clear()
         table.setRowCount(0)
         table.setColumnCount(0)
         self.workbook_sheet_summary_label.setText(f"Loading {sheet_name}...")
-        QApplication.processEvents()
+        self._set_workbook_busy(True, f"Loading {sheet_name}...")
 
-        ws = self._workbook[sheet_name]
-        rows = []
-        max_cols = ws.max_column or 0
-        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=max_cols, values_only=False):
-            values = [self._format_excel_value(value) for value in row]
-            rows.append(values)
+        def extract_rows():
+            with self._workbook_lock:
+                worksheet = self._workbook[sheet_name]
+                max_cols = worksheet.max_column or 0
+                rows = [
+                    [self._format_excel_value(value) for value in row]
+                    for row in worksheet.iter_rows(
+                        min_row=1,
+                        max_row=worksheet.max_row,
+                        max_col=max_cols,
+                        values_only=False,
+                    )
+                ]
+            return rows, max_cols
 
-        table.setRowCount(len(rows))
-        table.setColumnCount(max_cols)
-        # Use the first row as column headers if available, fall back to A/B/C
-        if rows:
-            header_labels = [
-                v if v else self._excel_column_label(i + 1)
-                for i, v in enumerate(rows[0])
-            ]
-        else:
-            header_labels = [self._excel_column_label(i + 1) for i in range(max_cols)]
-        table.setHorizontalHeaderLabels(header_labels)
-        self._set_workbook_column_widths(table)
+        def prepare(result):
+            if request_id != self._workbook_loading_request:
+                return
+            rows, max_cols = result
+            table.setRowCount(len(rows))
+            table.setColumnCount(max_cols)
+            if rows:
+                headers = [
+                    value if value else self._excel_column_label(column + 1)
+                    for column, value in enumerate(rows[0])
+                ]
+            else:
+                headers = [self._excel_column_label(column + 1) for column in range(max_cols)]
+            table.setHorizontalHeaderLabels(headers)
+            self._set_workbook_column_widths(table)
 
-        for row_idx, values in enumerate(rows):
-            for col_idx, value in enumerate(values):
-                table.setItem(row_idx, col_idx, QTableWidgetItem(value))
+            def populate(start=0):
+                if request_id != self._workbook_loading_request:
+                    return
+                end = min(start + 100, len(rows))
+                for row_index in range(start, end):
+                    for column_index, value in enumerate(rows[row_index]):
+                        table.setItem(row_index, column_index, QTableWidgetItem(value))
+                if end < len(rows):
+                    self.workbook_sheet_summary_label.setText(
+                        f"Loading {sheet_name}... {end}/{len(rows)} rows"
+                    )
+                    QTimer.singleShot(0, lambda: populate(end))
+                    return
+                table.blockSignals(False)
+                table.setEnabled(True)
+                self._loading_workbook_sheet = False
+                self._loaded_workbook_sheets.add(sheet_name)
+                self._set_workbook_busy(False)
+                self._update_workbook_sheet_summary(index)
+                if not self._workbook_dirty:
+                    self.workbook_status_label.setText(self._workbook_path or "")
 
-        table.blockSignals(False)
-        self._loading_workbook_sheet = False
-        self._loaded_workbook_sheets.add(sheet_name)
-        self._update_workbook_sheet_summary(index)
-        if not self._workbook_dirty:
-            self.workbook_status_label.setText(self._workbook_path or "")
-        self._refresh_workbook_controls()
+            populate()
+
+        def failed(error):
+            if request_id != self._workbook_loading_request:
+                return
+            table.blockSignals(False)
+            table.setEnabled(True)
+            self._loading_workbook_sheet = False
+            self._set_workbook_busy(False)
+            self.workbook_sheet_summary_label.setText(f"Could not load {sheet_name}")
+            QMessageBox.critical(
+                self,
+                "Workbook Sheet Error",
+                error.strip().splitlines()[-1],
+            )
+
+        return self._run_background(extract_rows, prepare, failed)
 
     def _on_workbook_cell_changed(self, row, column):
         if self._loading_workbook_sheet or not self._workbook:
@@ -2192,7 +2274,8 @@ class StudentApp(QMainWindow):
         sheet_name = self.workbook_tabs.tabText(index)
         item = table.item(row, column)
         text = item.text() if item else ""
-        self._workbook[sheet_name].cell(row=row + 1, column=column + 1).value = text if text != "" else None
+        with self._workbook_lock:
+            self._workbook[sheet_name].cell(row=row + 1, column=column + 1).value = text if text != "" else None
         self._workbook_dirty = True
         self._workbook_revision += 1
         self._invalidate_master_reference_cache()
@@ -2219,7 +2302,8 @@ class StudentApp(QMainWindow):
         selected_col = table.currentColumn()
         insert_col = selected_col if selected_col >= 0 else table.columnCount()
         excel_col = insert_col + 1
-        ws.insert_cols(excel_col)
+        with self._workbook_lock:
+            ws.insert_cols(excel_col)
 
         table.blockSignals(True)
         table.insertColumn(insert_col)
@@ -2233,7 +2317,8 @@ class StudentApp(QMainWindow):
             table.setItem(row, insert_col, QTableWidgetItem(""))
 
         table.item(0, insert_col).setText("New Column")
-        ws.cell(row=1, column=excel_col).value = "New Column"
+        with self._workbook_lock:
+            ws.cell(row=1, column=excel_col).value = "New Column"
         self._refresh_workbook_table_headers(table)
         table.blockSignals(False)
 
@@ -2277,7 +2362,8 @@ class StudentApp(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        ws.delete_cols(selected_col + 1)
+        with self._workbook_lock:
+            ws.delete_cols(selected_col + 1)
         table.blockSignals(True)
         table.removeColumn(selected_col)
         self._refresh_workbook_table_headers(table)
@@ -2297,23 +2383,75 @@ class StudentApp(QMainWindow):
     def save_workbook_tabs(self):
         if not self._workbook or not self._workbook_path:
             QMessageBox.information(self, "Workbook", "No workbook is open.")
-            return
+            return False
         try:
-            self._workbook.save(self._workbook_path)
+            if os.path.exists(self._workbook_path):
+                current_mtime = os.stat(self._workbook_path).st_mtime_ns
+                if self._workbook_mtime_ns is not None and current_mtime != self._workbook_mtime_ns:
+                    QMessageBox.warning(
+                        self,
+                        "Workbook Changed on Another Computer",
+                        "The workbook changed after you opened it. Your copy was not saved.\n\n"
+                        "Reload the workbook and re-apply your changes, or save a separate copy in Excel.",
+                    )
+                    return False
+
+            self._backup_workbook_file()
+            directory = os.path.dirname(os.path.abspath(self._workbook_path))
+            suffix = os.path.splitext(self._workbook_path)[1] or ".xlsx"
+            handle, temporary_path = tempfile.mkstemp(
+                prefix=".ssm-save-", suffix=suffix, dir=directory
+            )
+            os.close(handle)
+            try:
+                with self._workbook_lock:
+                    self._workbook.save(temporary_path)
+                os.replace(temporary_path, self._workbook_path)
+            finally:
+                if os.path.exists(temporary_path):
+                    os.remove(temporary_path)
+
+            self._workbook_mtime_ns = os.stat(self._workbook_path).st_mtime_ns
             self._workbook_dirty = False
             self._workbook_revision += 1
             self._invalidate_master_reference_cache()
             self.workbook_status_label.setText(self._workbook_path)
             self._refresh_workbook_controls()
             self.status_bar.showMessage("Workbook saved", 4000)
+            return True
         except PermissionError:
             QMessageBox.warning(
                 self,
                 "Workbook Is Open",
                 "Could not save the workbook. Please close it in Excel, then click Save Workbook again."
             )
+            return False
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Could not save workbook:\n({type(e).__name__}) {e}")
+            return False
+
+    def _backup_workbook_file(self):
+        if not self._workbook_path or not os.path.exists(self._workbook_path):
+            return
+        backup_dir = os.path.join(os.path.dirname(self._workbook_path), "SSM Backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        stem, extension = os.path.splitext(os.path.basename(self._workbook_path))
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        shutil.copy2(
+            self._workbook_path,
+            os.path.join(backup_dir, f"{stem}-{timestamp}{extension}"),
+        )
+        backups = sorted(
+            (
+                os.path.join(backup_dir, name)
+                for name in os.listdir(backup_dir)
+                if name.startswith(f"{stem}-") and name.endswith(extension)
+            ),
+            key=os.path.getmtime,
+            reverse=True,
+        )
+        for old_backup in backups[10:]:
+            os.remove(old_backup)
 
     def sync_current_sheet_to_supabase(self):
         if not self._workbook:
@@ -2331,38 +2469,69 @@ class StudentApp(QMainWindow):
                 f"'{sheet_name}' looks like an older master list.\n\nUse '{latest_master}' for student sync, or export from Supabase instead."
             )
             return
-        try:
-            count = self._sync_workbook_sheet_to_supabase(sheet_name)
+        self._set_workbook_busy(True, f"Syncing {sheet_name}...")
+
+        def sync():
+            with self._workbook_lock:
+                return self._sync_workbook_sheet_to_supabase(sheet_name)
+
+        def synced(count):
+            self._set_workbook_busy(False)
             if count is None:
                 QMessageBox.information(self, "Sync", f"'{sheet_name}' is not a supported Supabase sync sheet.")
                 return
             QMessageBox.information(self, "Sync Complete", f"Synced {count} records from '{sheet_name}'.")
             self.workbook_status_label.setText(f"Synced {count} records from {sheet_name}.")
-            self.refresh_dashboard()
-        except Exception as e:
-            QMessageBox.critical(self, "Sync Failed", f"Could not sync '{sheet_name}':\n({type(e).__name__}) {e}")
+            self._audit("sync", "workbook_sheet", sheet_name, {"record_count": count})
+            self._on_students_changed()
+
+        def failed(error):
+            self._set_workbook_busy(False)
+            QMessageBox.critical(
+                self,
+                "Sync Failed",
+                f"Could not sync '{sheet_name}':\n{error.strip().splitlines()[-1]}",
+            )
+
+        return self._run_background(sync, synced, failed)
 
     def sync_all_workbook_sheets_to_supabase(self):
         if not self._workbook:
             QMessageBox.information(self, "Sync", "Open a workbook first.")
             return
-        try:
-            results = []
-            latest_master = self._latest_master_sheet_name()
-            for sheet_name in self._workbook.sheetnames:
-                if "master" in sheet_name.lower() and sheet_name != latest_master:
-                    continue
-                count = self._sync_workbook_sheet_to_supabase(sheet_name)
-                if count is not None:
-                    results.append(f"{sheet_name}: {count}")
+        self._set_workbook_busy(True, "Syncing workbook sheets...")
+
+        def sync_all():
+            with self._workbook_lock:
+                results = []
+                latest_master = self._latest_master_sheet_name()
+                for sheet_name in self._workbook.sheetnames:
+                    if "master" in sheet_name.lower() and sheet_name != latest_master:
+                        continue
+                    count = self._sync_workbook_sheet_to_supabase(sheet_name)
+                    if count is not None:
+                        results.append(f"{sheet_name}: {count}")
+            return results
+
+        def synced(results):
+            self._set_workbook_busy(False)
             if not results:
                 QMessageBox.information(self, "Sync", "No supported workbook sheets were found.")
                 return
             QMessageBox.information(self, "Sync Complete", "Synced sheets:\n" + "\n".join(results))
             self.workbook_status_label.setText(f"Synced {len(results)} sheets to Supabase.")
-            self.refresh_dashboard()
-        except Exception as e:
-            QMessageBox.critical(self, "Sync Failed", f"Could not sync workbook:\n({type(e).__name__}) {e}")
+            self._audit("sync_all", "workbook", details={"results": results})
+            self._on_students_changed()
+
+        def failed(error):
+            self._set_workbook_busy(False)
+            QMessageBox.critical(
+                self,
+                "Sync Failed",
+                f"Could not sync workbook:\n{error.strip().splitlines()[-1]}",
+            )
+
+        return self._run_background(sync_all, synced, failed)
 
     def _sync_workbook_sheet_to_supabase(self, sheet_name):
         return self.workbook_import_service.sync_sheet(self._workbook, sheet_name)
@@ -2495,6 +2664,11 @@ class StudentApp(QMainWindow):
         """
         def L(msg):
             if log is not None: log.append(msg)
+
+        # Invalidate every older download before handling this request. This
+        # must happen even when the new profile has no photo or uses the cache.
+        self._photo_gen = getattr(self, "_photo_gen", 0) + 1
+        my_gen = self._photo_gen
         if not url:
             label.clear(); label.setText("No Photo"); return
 
@@ -2504,11 +2678,6 @@ class StudentApp(QMainWindow):
         if os.path.exists(cache_path):
             self._set_photo_local(label, cache_path)
             return
-
-        # Bump the generation so any in-flight fetch for the *previous* student
-        # can detect it is now stale.
-        self._photo_gen = getattr(self, "_photo_gen", 0) + 1
-        my_gen = self._photo_gen
 
         def fetch():
             _path, data = self.photo_service.download_photo_to_cache(url)
@@ -2654,9 +2823,13 @@ class StudentApp(QMainWindow):
             current = self._apply_current_master_status(student).get("status")
             new_status = "Active" if current == "Inactive/Removed" else "Inactive/Removed"
             self.student_repository.update_status(self.current_student_id, new_status)
+            self._audit(
+                "status_change", "student", self.current_student_id,
+                {"status": new_status},
+            )
             self._load_profile(self.current_student_id)
             self.status_bar.showMessage(f"Status set to {new_status}", 3000)
-            self.refresh_dashboard() # Update dashboard stats silently
+            self._on_students_changed()
         except Exception as e:
             self.status_bar.showMessage(f"Status update error ({type(e).__name__}): {e}", 8000)
 
@@ -2672,6 +2845,14 @@ class StudentApp(QMainWindow):
             s = self._apply_current_master_status(student)
             self.form_title_label.setText("Edit Student")
             self._editing_id = self.current_student_id
+            self._editing_snapshot = {
+                field: student.get(field)
+                for field in (
+                    "last_name", "first_name", "gender", "grade", "address",
+                    "city", "area", "birthday", "sponsor", "contact", "school",
+                    "parents", "course", "remarks", "status",
+                )
+            }
             self.inp_last.setText(s.get("last_name") or "")
             self.inp_first.setText(s.get("first_name") or "")
             self.inp_gender.setCurrentIndex(max(self.inp_gender.findText(s.get("gender") or ""), 0))
@@ -2709,6 +2890,7 @@ class StudentApp(QMainWindow):
         self.add_photo_label.clear(); self.add_photo_label.setText("No Photo")
         self._pending_photo = None
         self._editing_id = None
+        self._editing_snapshot = None
         self.form_title_label.setText("Add New Student")
 
     def save_student_form(self):
@@ -2733,12 +2915,27 @@ class StudentApp(QMainWindow):
             "status":     self.inp_status.currentText(),
         }
         editing = self._editing_id
+        editing_snapshot = dict(self._editing_snapshot or {})
         pending_photo = self._pending_photo
         self.save_form_btn.setEnabled(False)
         self.status_bar.showMessage("Saving student...", 30000)
 
         def save():
             if editing:
+                current = self.student_repository.get_student_single(
+                    editing,
+                    columns=",".join(editing_snapshot),
+                )
+                changed_elsewhere = any(
+                    str(current.get(field) or "").strip()
+                    != str(original or "").strip()
+                    for field, original in editing_snapshot.items()
+                )
+                if changed_elsewhere:
+                    raise RuntimeError(
+                        "This student was changed on another computer. "
+                        "Reopen the profile and apply your changes again."
+                    )
                 self.student_repository.update_student(editing, payload)
                 student_id = editing
             else:
@@ -2757,13 +2954,14 @@ class StudentApp(QMainWindow):
             student_id, was_editing = result
             self.save_form_btn.setEnabled(True)
             self._clear_form()
+            self._audit("update" if was_editing else "create", "student", student_id)
+            self._on_students_changed()
             if was_editing:
                 self.current_student_id = student_id
                 self._load_profile(student_id)
                 self._switch_page(2)
             else:
                 self.nav_students()
-            self.refresh_dashboard()
             self.status_bar.showMessage("Student saved", 4000)
 
         def failed(error):
@@ -2900,6 +3098,10 @@ class StudentApp(QMainWindow):
             return
         try:
             self.expense_service.save_budget(self.current_student_id, sy, amount)
+            self._audit(
+                "save_budget", "student", self.current_student_id,
+                {"school_year": sy, "amount": amount},
+            )
             self.status_bar.showMessage(f"Budget saved: PHP {amount:,.2f} for {sy}", 4000)
             self.load_expenses()
         except Exception as e:
@@ -2924,6 +3126,10 @@ class StudentApp(QMainWindow):
             self.expense_service.add_expense(
                 self.current_student_id, desc, amount, expense_date, school_year
             )
+            self._audit(
+                "add_expense", "student", self.current_student_id,
+                {"school_year": school_year, "amount": amount, "description": desc},
+            )
             self.exp_desc.clear()
             self.exp_amount.clear()
             self.exp_date.setDate(QDate.currentDate())
@@ -2937,9 +3143,30 @@ class StudentApp(QMainWindow):
     def delete_expense(self, eid):
         try:
             self.expense_service.delete_expense(eid)
+            self._audit("delete", "expense", eid)
             self.load_expenses()
         except Exception as e:
             self.status_bar.showMessage(f"Error ({type(e).__name__}): {e}", 8000)
+
+    def closeEvent(self, event):
+        if self._workbook_dirty:
+            decision = QMessageBox.question(
+                self,
+                "Unsaved Workbook Changes",
+                "Save workbook changes before closing the application?",
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No |
+                QMessageBox.StandardButton.Cancel,
+            )
+            if decision == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            if decision == QMessageBox.StandardButton.Yes and not self.save_workbook_tabs():
+                event.ignore()
+                return
+        if self._workbook and hasattr(self._workbook, "close"):
+            self._workbook.close()
+        event.accept()
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -2957,11 +3184,12 @@ if __name__ == "__main__":
     result = splash.exec()
 
     if result == QDialog.DialogCode.Rejected and not splash.success:
-        QMessageBox.warning(
-            None, "Offline Mode",
-            "Could not reach Supabase.\n\nThe app will open, but data may not load correctly.\n\n"
+        QMessageBox.critical(
+            None, "Connection Required",
+            "Could not reach Supabase. This application requires a database connection and will now close.\n\n"
             f"Error: {splash.error_msg}"
         )
+        raise SystemExit(1)
 
     # 3. Launch main window
     window = StudentApp(sb, initial_user=splash.selected_user)

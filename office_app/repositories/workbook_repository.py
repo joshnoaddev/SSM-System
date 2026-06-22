@@ -53,3 +53,29 @@ class WorkbookRepository:
             response = self.sb.table(table_name).insert(chunk).execute()
             inserted.extend(list(response.data or []))
         return inserted
+
+    def list_records(
+        self,
+        table_name: str,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        query = self.sb.table(table_name).select("*")
+        for field, value in (filters or {}).items():
+            query = query.eq(field, value)
+        response = query.execute()
+        return list(response.data or [])
+
+    def replace_donor_students(self, school_year: str, records: List[Dict[str, Any]]) -> int:
+        response = self.sb.rpc(
+            "replace_donor_students_transactional",
+            {"target_school_year": school_year, "payload": records},
+        ).execute()
+        return int(response.data or 0)
+
+    def replace_student_movements(self, records: List[Dict[str, Any]]) -> int:
+        response = self.sb.rpc(
+            "replace_student_movements_transactional",
+            {"payload": records},
+        ).execute()
+        return int(response.data or 0)

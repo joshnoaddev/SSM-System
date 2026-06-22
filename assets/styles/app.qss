@@ -103,12 +103,19 @@ QLabel#CountBanner { padding: 12px 16px; border: 1px solid @border_subtle; borde
 QLabel#PhotoFrame { border: 1px solid @border; border-radius: 8px; background: @surface_subtle; color: @text_disabled; font-size: 12px; }
 
 /* Lists and custom rows */
-QListWidget { border: 1px solid @border_subtle; border-radius: 8px; background: @surface; alternate-background-color: @surface_subtle; color: @text_primary; outline: none; }
+QListWidget, QListView { border: 1px solid @border_subtle; border-radius: 8px; background: @surface; alternate-background-color: @surface_subtle; color: @text_primary; outline: none; }
 QListWidget::item { padding: 12px 16px; border-bottom: 1px solid @border_subtle; }
 QListWidget::item:alternate { background: @surface_subtle; }
 QListWidget::item:hover:!selected { background: @primary_soft; }
 QListWidget::item:selected { background: @primary_selected; color: @primary_pressed; border-left: 4px solid @primary; }
 QListWidget#StudentList::item { padding: 0; }
+QListView#StudentList { padding: 0; }
+QListView#StudentList::item { padding: 0; border: none; background: transparent; }
+QWidget#AreaFacetCard { background: @surface; border: 1px solid @border_subtle; border-radius: @radius_md; }
+QListWidget#AreaFacet { border: none; border-radius: 0; background: transparent; }
+QListWidget#AreaFacet::item { padding: 8px 10px; margin: 1px 0; border: none; border-radius: 6px; }
+QListWidget#AreaFacet::item:hover { background: @primary_soft; color: @primary; }
+QListWidget#AreaFacet::item:selected { background: @primary_selected; color: @primary_pressed; font-weight: 700; }
 QWidget#AreaChoice, QWidget#StudentCard { background: transparent; }
 QLabel#AreaName, QLabel#StudentName { color: @text_primary; font-size: 15px; font-weight: 700; }
 QLabel#AreaHint, QLabel#StudentMeta, QLabel#RemarksText { color: @text_secondary; font-size: 12px; }

@@ -108,7 +108,10 @@ class ExpenseService:
         raw = str(value or "").replace(",", "").replace("PHP", "").strip()
         if not raw:
             raise ValueError("Amount is required.")
-        return float(raw)
+        amount = float(raw)
+        if amount < 0:
+            raise ValueError("Amount cannot be negative.")
+        return amount
 
     @staticmethod
     def calculate_total(expenses: Iterable[Dict[str, Any]]) -> float:

@@ -92,13 +92,14 @@ class StatusBadge(QLabel):
 class EmptyState(Card):
     """Reusable centered empty state with optional description and action."""
 
-    def __init__(self, title, description="", action=None, parent=None):
+    def __init__(self, title, description="", action=None, parent=None, *, shadow=True):
         layout = QVBoxLayout()
         super().__init__(
             parent,
             layout=layout,
             margins=(Spacing.XL, Spacing.XL, Spacing.XL, Spacing.XL),
             spacing=Spacing.S,
+            shadow=shadow,
         )
         self.setProperty("component", "emptyState")
 

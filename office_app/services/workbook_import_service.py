@@ -98,17 +98,9 @@ class WorkbookImportService:
                 "status": status,
             })
 
-        synced = 0
-        for record in records:
-            existing = self.student_repository.find_by_identity(
-                record["last_name"], record["first_name"], record.get("birthday")
-            )
-            if existing:
-                self.student_repository.update_student(existing[0]["id"], record)
-            else:
-                self.student_repository.insert_student(record)
-            synced += 1
-        return synced
+        if not records:
+            raise ValueError("Master list contains no importable records; existing data was preserved.")
+        return self.student_repository.import_students(records)
 
     def sync_coordinator_sheet(self, workbook: Any, sheet_name: str) -> int:
         rows = self.sheet_values(workbook, sheet_name)
@@ -132,9 +124,9 @@ class WorkbookImportService:
                 "remarks": self.safe_cell(row, headers.get("remarks")),
             })
 
-        self.coordinator_repository.delete_all_coordinators()
-        self.coordinator_repository.insert_coordinators(records)
-        return len(records)
+        if not records:
+            raise ValueError("Coordinator sheet contains no importable records; existing data was preserved.")
+        return self.coordinator_repository.replace_coordinators(records)
 
     def sync_donor_sheet(self, workbook: Any, sheet_name: str) -> int:
         rows = self.sheet_values(workbook, sheet_name)
@@ -173,9 +165,9 @@ class WorkbookImportService:
                 "remarks": self.safe_cell(row, header.get("remarks")),
             })
 
-        self.workbook_repository.delete_donor_students_by_school_year(school_year)
-        self.workbook_repository.insert_records("donor_students", records)
-        return len(records)
+        if not records:
+            raise ValueError("Donor sheet contains no importable records; existing data was preserved.")
+        return self.workbook_repository.replace_donor_students(school_year, records)
 
     def sync_movements_sheet(self, workbook: Any, sheet_name: str) -> int:
         rows = self.sheet_values(workbook, sheet_name)
@@ -210,9 +202,9 @@ class WorkbookImportService:
                 "remarks": self.safe_cell(row, header.get("remarks")),
             })
 
-        self.workbook_repository.delete_all_student_movements()
-        self.workbook_repository.insert_records("student_movements", records)
-        return len(records)
+        if not records:
+            raise ValueError("Movements sheet contains no importable records; existing data was preserved.")
+        return self.workbook_repository.replace_student_movements(records)
 
     def sheet_values(self, workbook: Any, sheet_name: str) -> List[List[str]]:
         worksheet = workbook[sheet_name]

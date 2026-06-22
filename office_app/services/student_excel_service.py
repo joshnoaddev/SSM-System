@@ -41,9 +41,8 @@ class StudentExcelService:
 
     def import_students(self, path: str, *, chunk_size: int = 50) -> Tuple[str, int]:
         sheet_name, records = self.parse_students(path)
-        for start in range(0, len(records), chunk_size):
-            self.student_repository.insert_students(records[start:start + chunk_size])
-        return sheet_name, len(records)
+        imported = self.student_repository.import_students(records)
+        return sheet_name, imported
 
     def parse_students(self, path: str) -> Tuple[str, List[Dict[str, Any]]]:
         sheet_name = self._select_import_sheet(path)

@@ -1,4 +1,4 @@
-PyQt6
-supabase
-pandas
-openpyxl
+PyQt6==6.11.0
+supabase==2.31.0
+pandas==3.0.3
+openpyxl==3.1.5

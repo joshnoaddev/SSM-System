@@ -94,6 +94,15 @@ class StudentRepository:
         response = self.sb.table("students").insert(records).execute()
         return list(response.data or [])
 
+    def import_students(self, records: List[Dict[str, Any]]) -> int:
+        if not records:
+            return 0
+        response = self.sb.rpc(
+            "import_students_transactional",
+            {"payload": records},
+        ).execute()
+        return int(response.data or 0)
+
     def find_by_identity(
         self,
         last_name: str,
@@ -121,17 +130,26 @@ class StudentRepository:
         area: Optional[str] = None,
         area_exact: bool = False,
         order_by: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
-        query = self.sb.table("students").select(columns)
-        if name_query:
-            query = query.or_(
-                f"last_name.ilike.%{name_query}%,first_name.ilike.%{name_query}%"
-            )
-        if sponsor_query:
-            query = query.ilike("sponsor", f"%{sponsor_query}%")
-        if area:
-            query = query.eq("area", area) if area_exact else query.ilike("area", area)
-        for field in order_by or []:
-            query = query.order(field)
+        def build_query():
+            query = self.sb.table("students").select(columns)
+            if name_query:
+                escaped = name_query.replace("\\", "\\\\").replace('"', '\\"')
+                query = query.or_(
+                    f'last_name.ilike."%{escaped}%",first_name.ilike."%{escaped}%"'
+                )
+            if sponsor_query:
+                query = query.ilike("sponsor", f"%{sponsor_query}%")
+            if area:
+                query = query.eq("area", area) if area_exact else query.ilike("area", area)
+            for field in order_by or []:
+                query = query.order(field)
+            return query
+
+        query = build_query()
+        if limit is not None:
+            query = query.range(offset, offset + limit - 1)
         response = query.execute()
         return list(response.data or [])
