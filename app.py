@@ -1176,13 +1176,15 @@ class StudentApp(QMainWindow):
         filter_card = Card()
         f_layout = QVBoxLayout(filter_card)
         f_layout.setContentsMargins(16, 16, 16, 16)
-        f_layout.setSpacing(16)
+        f_layout.setSpacing(12)
         
         mode_bar = QHBoxLayout()
         mode_bar.setSpacing(8)
         self.btn_all_students = QPushButton("All Students")
+        self.btn_all_students.setMinimumWidth(112)
         self.btn_all_students.setCheckable(True)
         self.btn_areas = QPushButton("Areas")
+        self.btn_areas.setMinimumWidth(72)
         self.btn_areas.setCheckable(True)
         self.btn_all_students.setObjectName("SecondaryBtn")
         self.btn_areas.setObjectName("SecondaryBtn")
@@ -1191,7 +1193,6 @@ class StudentApp(QMainWindow):
         mode_bar.addWidget(self.btn_all_students)
         mode_bar.addWidget(self.btn_areas)
         mode_bar.addStretch()
-        f_layout.addLayout(mode_bar)
 
         search_row = QHBoxLayout()
         search_row.setSpacing(8)
@@ -1203,7 +1204,6 @@ class StudentApp(QMainWindow):
         self.search_sponsor.textChanged.connect(self.load_student_list)
         search_row.addWidget(self.search_name, 1)
         search_row.addWidget(self.search_sponsor, 1)
-        f_layout.addLayout(search_row)
 
         filter_row = QHBoxLayout()
         filter_row.setSpacing(8)
@@ -1234,6 +1234,19 @@ class StudentApp(QMainWindow):
         clear_btn = QPushButton("Clear Filters"); clear_btn.setObjectName("SecondaryBtn")
         clear_btn.clicked.connect(self.clear_student_filters)
 
+        for button in (clear_btn, refresh_btn, import_btn, export_btn):
+            button.setProperty("density", "compact")
+
+        clear_btn.setMinimumWidth(96)
+        refresh_btn.setMinimumWidth(80)
+        import_btn.setMinimumWidth(96)
+        export_btn.setMinimumWidth(96)
+
+        mode_bar.addWidget(clear_btn)
+        mode_bar.addWidget(refresh_btn)
+        mode_bar.addWidget(import_btn)
+        mode_bar.addWidget(export_btn)
+
         filter_row.addWidget(QLabel("Grade:"))
         filter_row.addWidget(self.filter_grade)
         filter_row.addWidget(self.area_select)
@@ -1241,21 +1254,10 @@ class StudentApp(QMainWindow):
         filter_row.addWidget(QLabel("Status:"))
         filter_row.addWidget(self.filter_status)
         filter_row.addStretch()
+
+        f_layout.addLayout(mode_bar)
+        f_layout.addLayout(search_row)
         f_layout.addLayout(filter_row)
-
-        filter_actions = QHBoxLayout()
-        filter_actions.setSpacing(Spacing.XS)
-        filter_actions.addWidget(clear_btn)
-        filter_actions.addWidget(refresh_btn)
-        filter_actions.addStretch()
-        f_layout.addLayout(filter_actions)
-
-        file_actions = QHBoxLayout()
-        file_actions.setSpacing(Spacing.XS)
-        file_actions.addWidget(import_btn)
-        file_actions.addWidget(export_btn)
-        file_actions.addStretch()
-        f_layout.addLayout(file_actions)
         
         layout.addWidget(filter_card)
 

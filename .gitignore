@@ -1,0 +1,6 @@
+# Local AI handoff artifact
+claude-handoff.diff
+
+# Python bytecode
+__pycache__/
+*.py[cod]

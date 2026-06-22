@@ -41,7 +41,7 @@ QPushButton { min-height: 20px; padding: @space_xs @space_md; border: 1px solid 
 QPushButton:hover { background: @primary_hover; border-color: @primary_hover; }
 QPushButton:pressed, QPushButton:checked { background: @primary_pressed; border-color: @primary_pressed; }
 QPushButton:disabled { background: @border_subtle; border-color: @border_subtle; color: @text_disabled; }
-QPushButton[density="compact"] { min-height: 20px; padding: @space_xxs @space_sm; border-radius: 6px; font-size: 12px; }
+QPushButton[density="compact"] { min-height: 16px; padding: @space_xxs @space_xs; border-radius: 6px; font-size: 12px; }
 QPushButton#SecondaryBtn, QPushButton[variant="secondary"] { background: @surface; border-color: @border; color: @text_primary; }
 QPushButton#SecondaryBtn:hover, QPushButton[variant="secondary"]:hover { background: @surface_subtle; border-color: @primary; color: @primary; }
 QPushButton#SecondaryBtn:pressed, QPushButton#SecondaryBtn:checked, QPushButton[variant="secondary"]:pressed { background: @primary_soft; border-color: @primary; color: @primary_pressed; }
@@ -56,9 +56,9 @@ QPushButton#WarningBtn:hover, QPushButton[variant="warning"]:hover { background:
 QPushButton#WarningBtn:pressed, QPushButton[variant="warning"]:pressed { background: @warning_pressed; border-color: @warning_pressed; }
 
 /* Inputs */
-QLineEdit, QTextEdit, QComboBox, QDoubleSpinBox, QDateEdit { min-height: 20px; padding: @space_xs @space_sm; border: 1px solid @border; border-radius: @radius_md; background: @surface; color: @text_primary; selection-background-color: @primary_selected; selection-color: @text_primary; }
+QLineEdit, QTextEdit, QComboBox, QDoubleSpinBox, QDateEdit { min-height: 20px; padding: @space_xs @space_sm; border: 2px solid @border; border-radius: @radius_md; background: @surface; color: @text_primary; selection-background-color: @primary_selected; selection-color: @text_primary; }
 QLineEdit:hover, QTextEdit:hover, QComboBox:hover, QDoubleSpinBox:hover, QDateEdit:hover { border-color: @text_disabled; }
-QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QDateEdit:focus { border: 2px solid @primary; padding: 8px 12px; }
+QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QDateEdit:focus { border-color: @primary; }
 QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QDoubleSpinBox:disabled, QDateEdit:disabled { background: @surface_subtle; border-color: @border_subtle; color: @text_disabled; }
 QComboBox, QDateEdit { padding-right: 40px; }
 QComboBox::drop-down, QDateEdit::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 40px; border-left: 1px solid @border; border-top-right-radius: 8px; border-bottom-right-radius: 8px; background: @surface_subtle; }
@@ -128,15 +128,17 @@ QWidget#StudentCard[status="graduated"] QLabel#StudentBadge { color: @graduated;
 QLabel#StatusLabel { font-size: 14px; font-weight: 700; padding-bottom: 8px; }
 QLabel#StatusLabel[status="active"] { color: @success; }
 QLabel#StatusLabel[status="inactive"] { color: @danger; }
+QLabel#StatusLabel[status="warning"] { color: @warning; }
 QLabel#StatusLabel[status="graduated"] { color: @graduated; }
 
 /* Tables */
 QTableView, QTableWidget { border: 1px solid @border_subtle; border-radius: 8px; background: @surface; alternate-background-color: @surface_subtle; color: @text_primary; gridline-color: transparent; outline: none; selection-background-color: @primary_selected; selection-color: @text_primary; }
 QTableView::item, QTableWidget::item { padding: 8px; border-bottom: 1px solid @border_subtle; }
 QTableWidget#ExpensesTable::item { padding: 4px; }
-QTableView::item:hover, QTableWidget::item:hover { background: @primary_soft; }
+QTableView::item:hover:!selected, QTableWidget::item:hover:!selected { background: @primary_soft; }
 QTableView::item:selected, QTableWidget::item:selected { background: @primary_selected; color: @text_primary; }
 QHeaderView::section { padding: 8px 12px; border: none; border-bottom: 1px solid @border; background: @surface_subtle; color: @text_secondary; font-size: 12px; font-weight: 700; }
+QTableCornerButton::section { border: none; border-right: 1px solid @border; border-bottom: 1px solid @border; background: @surface_subtle; }
 QTableWidget QLineEdit, QTableWidget QLineEdit:focus { min-height: 24px; padding: 4px 8px; border: 2px solid @primary; border-radius: 4px; background: @surface; }
 QWidget#TableActionCell { background: transparent; }
 
@@ -149,6 +151,7 @@ QProgressBar#BudgetProgress[state="neutral"]::chunk { background: @text_disabled
 QLabel#BudgetStatus[state="success"] { color: @success; font-weight: 600; }
 QLabel#BudgetStatus[state="warning"] { color: @warning; font-weight: 600; }
 QLabel#BudgetStatus[state="danger"] { color: @danger; font-weight: 600; }
+QLabel#BudgetStatus[state="neutral"] { color: @text_disabled; font-weight: 600; }
 
 /* Workbook and tabs */
 QLabel#WorkbookStateBadge { padding: 4px 8px; border: 1px solid @border; border-radius: 12px; background: @surface_subtle; color: @text_secondary; font-size: 12px; font-weight: 600; }
@@ -157,9 +160,11 @@ QLabel#WorkbookStateBadge[state="dirty"] { background: @warning_soft; border-col
 QFrame#ToolbarSeparator { color: @border; background: @border; min-width: 1px; max-width: 1px; }
 QComboBox#WorkbookSheetCombo { font-weight: 600; }
 QTabWidget::pane { border: 1px solid @border_subtle; border-radius: 8px; background: @surface; top: -1px; }
-QTabBar::tab { padding: 8px 16px; margin-right: 4px; border: none; border-bottom: 2px solid transparent; background: transparent; color: @text_secondary; font-size: 13px; font-weight: 600; }
+QTabBar { border-bottom: 1px solid @border_subtle; background: @surface_subtle; }
+QTabBar::tab { padding: 8px 16px; margin-right: 4px; border: none; border-bottom: 2px solid transparent; background: @surface_subtle; color: @text_secondary; font-size: 13px; font-weight: 600; }
 QTabBar::tab:hover { background: @primary_soft; color: @primary; }
 QTabBar::tab:selected { border-bottom-color: @primary; background: @surface; color: @primary_pressed; font-weight: 700; }
+QTabBar::tab:disabled { background: @surface_subtle; color: @text_disabled; }
 QTabBar QToolButton { border: 1px solid @border; border-radius: 4px; background: @surface_subtle; }
 QTabBar QToolButton:hover { background: @primary_soft; }
 
@@ -167,8 +172,10 @@ QTabBar QToolButton:hover { background: @primary_soft; }
 QScrollArea { border: none; background: transparent; }
 QScrollArea > QWidget > QWidget { background: transparent; }
 QScrollBar:vertical { width: 8px; margin: 0; border: none; border-radius: 4px; background: transparent; }
+QScrollBar:vertical:hover { background: @border_subtle; }
 QScrollBar::handle:vertical { min-height: 32px; border-radius: 4px; background: @text_disabled; }
 QScrollBar:horizontal { height: 8px; margin: 0; border: none; border-radius: 4px; background: transparent; }
+QScrollBar:horizontal:hover { background: @border_subtle; }
 QScrollBar::handle:horizontal { min-width: 32px; border-radius: 4px; background: @text_disabled; }
 QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: @text_secondary; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; border: none; background: none; }

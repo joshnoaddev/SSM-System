@@ -48,7 +48,7 @@ class Card(QFrame):
             effect = QGraphicsDropShadowEffect(self)
             effect.setBlurRadius(24)
             effect.setOffset(0, 4)
-            effect.setColor(theme_color("text_primary", 28))
+            effect.setColor(theme_color("shadow", 28))
             self.setGraphicsEffect(effect)
 
     def set_tone(self, tone: str) -> None:
@@ -61,8 +61,11 @@ class ActionButton(QPushButton):
 
     def __init__(self, text="", parent=None, *, variant="primary"):
         super().__init__(text, parent)
+        # Set the property before the widget is polished so QSS variant rules
+        # are in effect from the very first paint, not just after a re-polish.
         self.setProperty("variant", variant)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_style(self)
 
     def set_variant(self, variant: str) -> None:
         self.setProperty("variant", variant)
@@ -76,6 +79,8 @@ class StatusBadge(QLabel):
         super().__init__(text, parent)
         self.setObjectName(role)
         self.setProperty("state", state)
+        # Trigger polish so QSS state-property rules apply before first paint.
+        refresh_style(self)
 
     def set_state(self, state: str, text: str | None = None) -> None:
         if text is not None:
