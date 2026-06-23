@@ -189,6 +189,7 @@ QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; border: none; 
 QScrollBar::add-page, QScrollBar::sub-page { background: none; }
 
 QStatusBar { padding: 4px 12px; border-top: 1px solid @border_subtle; background: @surface; color: @text_secondary; font-size: 12px; }
+QLabel#StatusMeta { padding: 0 2px; border: none; background: transparent; color: @text_secondary; font-size: 12px; font-weight: 500; }
 QDialog, QMessageBox { background: @surface; color: @text_primary; }
 QMessageBox QLabel { color: @text_primary; }
 QMessageBox QPushButton { min-width: 88px; }

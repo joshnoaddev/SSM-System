@@ -11,8 +11,10 @@ from unittest.mock import patch
 from PyQt6.QtWidgets import QMessageBox
 from app import StudentApp
 from office_app.repositories.student_repository import StudentRepository
+from office_app.services.dashboard_service import DashboardService
 from office_app.services.expense_service import ExpenseService
 from office_app.services.student_excel_service import StudentExcelService
+from office_app.services.updater_service import UpdaterService
 from office_app.services.workbook_import_service import WorkbookImportService
 from office_app.ui.views.student_list_model import StudentListModel
 
@@ -105,6 +107,28 @@ class _WorkbookImportService(WorkbookImportService):
         return self._rows
 
 
+class _UpdateQuery:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def select(self, columns):
+        return self
+
+    def eq(self, field, value):
+        return self
+
+    def execute(self):
+        return SimpleNamespace(data=self.rows)
+
+
+class _UpdateClient:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def table(self, name):
+        return _UpdateQuery(self.rows)
+
+
 class RegressionTests(unittest.TestCase):
     def test_negative_amounts_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "negative"):
@@ -138,6 +162,25 @@ class RegressionTests(unittest.TestCase):
 
         self.assertEqual(model.rowCount(), 100)
         self.assertFalse(model.has_more)
+
+    def test_dashboard_counts_status_variants(self):
+        service = DashboardService()
+
+        counts = service.summary_counts([
+            {"status": "Active"},
+            {"status": "Inactive"},
+            {"status": "Inactive/Removed"},
+            {"status": "Removed"},
+            {"status": "Graduated"},
+            {"status": ""},
+        ])
+
+        self.assertEqual(counts, {
+            "total": 6,
+            "active": 2,
+            "inactive": 3,
+            "graduated": 1,
+        })
 
     def test_excel_import_uses_transactional_identity_import(self):
         repository = SimpleNamespace()
@@ -235,6 +278,48 @@ class RegressionTests(unittest.TestCase):
             service.sync_coordinator_sheet(None, "Coordinators")
 
         self.assertEqual(repository.delete_calls, 0)
+
+    def test_update_check_requires_newer_version_and_download_url(self):
+        updater = UpdaterService(_UpdateClient([{
+            "latest_version": "9.9.9",
+            "download_url": "",
+        }]))
+
+        self.assertIsNone(updater.check_for_update())
+
+    def test_update_check_returns_newer_version_with_url(self):
+        updater = UpdaterService(_UpdateClient([{
+            "latest_version": "9.9.9",
+            "download_url": "https://example.test/SSM.exe",
+        }]))
+
+        self.assertEqual(
+            updater.check_for_update(),
+            ("9.9.9", "https://example.test/SSM.exe"),
+        )
+
+    def test_update_download_validation_rejects_non_exe(self):
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(b"<html>not an exe</html>")
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "too small"):
+                UpdaterService._validate_downloaded_exe(temp_path)
+        finally:
+            os.remove(temp_path)
+
+    def test_update_download_validation_accepts_large_exe(self):
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(b"MZ")
+            temp_file.seek(UpdaterService.MIN_INSTALLER_BYTES)
+            temp_file.write(b"\0")
+
+        try:
+            UpdaterService._validate_downloaded_exe(temp_path)
+        finally:
+            os.remove(temp_path)
 
 
 if __name__ == "__main__":

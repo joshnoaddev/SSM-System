@@ -12,12 +12,21 @@ class DashboardService:
     """Build dashboard summaries from student rows without PyQt dependencies."""
 
     def summary_counts(self, rows: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
+        statuses = [self.status_bucket(row.get("status")) for row in rows]
         return {
             "total": len(rows),
-            "active": sum(1 for row in rows if str(row.get("status", "")) == "Active"),
-            "inactive": sum(1 for row in rows if str(row.get("status", "")) == "Inactive/Removed"),
-            "graduated": sum(1 for row in rows if str(row.get("status", "")) == "Graduated"),
+            "active": statuses.count("active"),
+            "inactive": statuses.count("inactive"),
+            "graduated": statuses.count("graduated"),
         }
+
+    def status_bucket(self, status: Any) -> str:
+        normalized = " ".join(str(status or "Active").strip().lower().replace("/", " ").split())
+        if "graduat" in normalized:
+            return "graduated"
+        if "inactive" in normalized or "removed" in normalized:
+            return "inactive"
+        return "active"
 
     def dedupe_students(self, rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
         students: Dict[DashboardKey, Mapping[str, Any]] = {}

@@ -23,8 +23,18 @@ Run from PowerShell:
 .\build_release.ps1
 ```
 
-Only distribute the generated `dist\SSM_Student_Profiling` folder. Do not copy a
-developer Python environment to the other computers.
+Upload the generated `dist\SSM_Student_Profiling.exe` to GitHub Releases or
+another public direct-download file host. Supabase Storage is not used for the
+compiled executable because the file is larger than the dashboard upload limit.
+
+After the file is uploaded, publish the update URL to Supabase:
+
+```powershell
+.\.venv\Scripts\python.exe .\publish_update.py --download-url "https://github.com/0superweak/SSM-System/releases/download/v1.0.1/SSM_Student_Profiling.exe"
+```
+
+Use the real release URL and version tag for the build you uploaded. Do not copy
+a developer Python environment to the other computers.
 
 ## Smoke test on every computer
 

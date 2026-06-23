@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QStackedWidget, QFormLayout, QFileDialog,
     QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QScrollArea, QComboBox, QStatusBar, QDialog, QTabWidget,
-    QProgressBar, QFrame, QGridLayout, QScrollBar, QDateEdit,
+    QProgressBar, QProgressDialog, QFrame, QGridLayout, QScrollBar, QDateEdit,
     QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QStyle
 )
 from PyQt6.QtCore import (
@@ -47,6 +47,10 @@ from office_app.ui import (
 )
 from office_app.ui.views import StudentListView
 from office_app.services.updater_service import UpdaterService
+
+def app_version_label() -> str:
+    return f"SSM v{UpdaterService.CURRENT_VERSION} - YWAM Balut"
+
 
 def render_qss(template: str) -> str:
     """Expand @token references because Qt QSS does not support variables."""
@@ -287,6 +291,7 @@ class StartupDialog(QDialog):
         self._progress_anim = None
         self._dot_timer = None
         self._dot_count = 0
+        self._loading_status_base = "Connecting to database"
         self._pending_sb = None
 
         self._signals = WorkerSignals()
@@ -394,7 +399,7 @@ class StartupDialog(QDialog):
 
         lay.addStretch()
 
-        ver = QLabel("SSM v1.0 - YWAM Balut")
+        ver = QLabel(app_version_label())
         self._user_version = ver
         ver.setObjectName("SplashVersion")
         ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -470,14 +475,15 @@ class StartupDialog(QDialog):
         lay.addSpacing(14)
 
         self.progress = QProgressBar()
-        self.progress.setRange(0, 0)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(6)
         lay.addWidget(self.progress)
 
         lay.addStretch()
 
-        ver = QLabel("SSM v1.0 - YWAM Balut")
+        ver = QLabel(app_version_label())
         ver.setObjectName("SplashVersion")
         ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(ver)
@@ -486,6 +492,8 @@ class StartupDialog(QDialog):
     # ── Connection logic ───────────────────────────────────────────────────────
     def start_ping(self, sb: Client):
         self.welcome_label.setText(f"Welcome, {self.selected_user}!")
+        self._set_loading_status(f"Checking version {UpdaterService.CURRENT_VERSION}")
+        self._set_loading_progress(25)
         self._start_dot_anim()
         self._pending_sb = sb  # keep ref so _on_update_checked can use it
 
@@ -498,30 +506,54 @@ class StartupDialog(QDialog):
         update_task.signals.succeeded.connect(self._on_update_checked)
         update_task.signals.failed.connect(
             # If the update check itself errors, just proceed with normal boot
-            lambda _err: self._start_normal_boot(sb)
+            lambda _err: self._resume_boot_after_version_check_error()
         )
         QThreadPool.globalInstance().start(update_task)
 
     def _on_update_checked(self, update_info):
         """Called on the main thread once the background update check completes."""
         if not update_info:
-            self._start_normal_boot(self._pending_sb)
+            self._show_version_complete_then_connect("Version is up to date")
             return
 
         latest_version, url = update_info
         if self._dot_timer:
             self._dot_timer.stop()
         self.status_label.setText(f"Update {latest_version} available! Downloading...")
-        self.progress.setRange(0, 100)
+        self._set_loading_progress(50)
 
         # Start the download (safely pushing UI updates back to main thread)
         self.updater.download_and_install(
             url=url,
-            progress_callback=lambda p: QTimer.singleShot(0, lambda: self.progress.setValue(p)),
+            progress_callback=lambda p: QTimer.singleShot(0, lambda: self._set_loading_progress(50 + int(p * 0.45), animate=False)),
             success_callback=lambda: QTimer.singleShot(0, lambda: self.status_label.setText("Restarting to apply update...")),
-            error_callback=lambda err: QTimer.singleShot(0, lambda: self._signals.failed.emit(f"Update failed: {err}"))
+            error_callback=lambda err: QTimer.singleShot(0, lambda: self._resume_boot_after_update_error(err))
         )
         # Do NOT start normal boot — we are updating and will os._exit()
+
+    def _resume_boot_after_update_error(self, error):
+        """Continue startup if an update cannot be installed."""
+        self._set_loading_status("Update skipped. Connecting to database")
+        self._set_loading_progress(75)
+        self._start_dot_anim()
+        self._start_normal_boot(self._pending_sb)
+
+    def _resume_boot_after_version_check_error(self):
+        """Continue startup when the version check cannot complete."""
+        self._show_version_complete_then_connect("Version check skipped")
+
+    def _show_version_complete_then_connect(self, message):
+        if self._dot_timer:
+            self._dot_timer.stop()
+        self._set_loading_progress(50)
+        self.status_label.setText(f"{message}.")
+        QTimer.singleShot(950, self._continue_after_version_check)
+
+    def _continue_after_version_check(self):
+        self._set_loading_status("Connecting to database")
+        self._set_loading_progress(75)
+        self._start_dot_anim()
+        self._start_normal_boot(self._pending_sb)
 
     def _start_normal_boot(self, sb):
         """Kick off the normal DB ping after the update check finds nothing."""
@@ -533,23 +565,41 @@ class StartupDialog(QDialog):
         QThreadPool.globalInstance().start(task)
 
     def _start_dot_anim(self):
+        if self._dot_timer:
+            self._dot_timer.stop()
         self._dot_count = 0
         self._dot_timer = QTimer(self)
         self._dot_timer.setInterval(420)
         self._dot_timer.timeout.connect(self._tick_dots)
         self._dot_timer.start()
 
+    def _set_loading_status(self, message):
+        self._loading_status_base = message
+        self.status_label.setText(message)
+
+    def _set_loading_progress(self, value, animate=True):
+        value = max(0, min(100, int(value)))
+        self.progress.setRange(0, 100)
+        if not animate:
+            self.progress.setValue(value)
+            return
+        animation = QPropertyAnimation(self.progress, b"value", self)
+        animation.setDuration(260)
+        animation.setStartValue(self.progress.value())
+        animation.setEndValue(value)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._phase_progress_anim = animation
+        animation.start()
+
     def _tick_dots(self):
         self._dot_count = (self._dot_count + 1) % 4
-        self.status_label.setText("Connecting to database" + "." * self._dot_count)
+        self.status_label.setText(self._loading_status_base + "." * self._dot_count)
 
     def _on_connected(self):
         if self._dot_timer:
             self._dot_timer.stop()
         self.success = True
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.status_label.setText("Connected - opening workspace...")
+        self.status_label.setText("Connected. Opening workspace...")
         self.welcome_label.setVisible(True)
 
         self._welcome_anim = QPropertyAnimation(self.welcome_effect, b"opacity", self)
@@ -560,13 +610,13 @@ class StartupDialog(QDialog):
 
         self._progress_anim = QPropertyAnimation(self.progress, b"value", self)
         self._progress_anim.setDuration(850)
-        self._progress_anim.setStartValue(0)
+        self._progress_anim.setStartValue(self.progress.value())
         self._progress_anim.setEndValue(100)
         self._progress_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         self._welcome_anim.start()
         self._progress_anim.start()
-        QTimer.singleShot(1350, self.accept)
+        QTimer.singleShot(2400, self.accept)
 
     def _on_failed(self, msg):
         if self._dot_timer:
@@ -689,6 +739,14 @@ class StudentApp(QMainWindow):
         self.status_bar = QStatusBar()
         self.status_bar.setSizeGripEnabled(False)
         self.setStatusBar(self.status_bar)
+        self._last_database_update_at = None
+        self.database_updated_label = QLabel("DB: waiting")
+        self.database_updated_label.setObjectName("StatusMeta")
+        self.status_bar.addPermanentWidget(self.database_updated_label)
+        self.database_updated_timer = QTimer(self)
+        self.database_updated_timer.setInterval(30000)
+        self.database_updated_timer.timeout.connect(self._refresh_database_updated_label)
+        self.database_updated_timer.start()
 
         # Main Layout: Sidebar + Main Content
         main_widget = QWidget()
@@ -739,7 +797,7 @@ class StudentApp(QMainWindow):
             self.student_excel_service,
             self._run_background,
             filter_current_rows_fn=self._filter_current_master_rows,
-            status_message_fn=self.status_bar.showMessage,
+            status_message_fn=self._student_list_status_message,
         )
         self.student_list_view.student_selected.connect(self._open_student_profile)
         self.student_list_view.students_changed.connect(self._on_students_changed)
@@ -771,6 +829,30 @@ class StudentApp(QMainWindow):
             task.signals.failed.connect(on_error)
         self.thread_pool.start(task)
         return task
+
+    def _mark_database_updated(self):
+        self._last_database_update_at = datetime.now()
+        self._refresh_database_updated_label()
+
+    def _refresh_database_updated_label(self):
+        if self._last_database_update_at is None:
+            self.database_updated_label.setText("DB: waiting")
+            return
+        elapsed = max(0, int((datetime.now() - self._last_database_update_at).total_seconds()))
+        if elapsed < 10:
+            text = "now"
+        elif elapsed < 60:
+            text = f"{elapsed}s ago"
+        elif elapsed < 3600:
+            text = f"{elapsed // 60}m ago"
+        else:
+            text = f"{elapsed // 3600}h ago"
+        self.database_updated_label.setText(f"DB updated: {text}")
+
+    def _student_list_status_message(self, message, timeout=0):
+        self.status_bar.showMessage(message, timeout)
+        if message.startswith("Loaded ") or message.startswith("Imported "):
+            self._mark_database_updated()
 
     def _switch_page(self, index: int):
         if not hasattr(self, "stacked_widget") or index < 0:
@@ -921,6 +1003,7 @@ class StudentApp(QMainWindow):
         self._switch_page(2)
 
     def _on_students_changed(self):
+        self._mark_database_updated()
         self.refresh_dashboard()
         self.student_list_view.refresh_filter_options()
         if self.stacked_widget.currentIndex() == 1:
@@ -1001,12 +1084,13 @@ class StudentApp(QMainWindow):
         self.keepalive_timer.setInterval(KEEPALIVE_INTERVAL_MS)
         self.keepalive_timer.timeout.connect(self._do_keepalive)
         self.keepalive_timer.start()
+        self._mark_database_updated()
         self.status_bar.showMessage("Connected to Supabase", 5000)
 
     def _do_keepalive(self):
         self._run_background(
             self.student_repository.ping,
-            lambda _rows: self.status_bar.showMessage("Supabase keepalive OK", 4000),
+            lambda _rows: (self._mark_database_updated(), self.status_bar.showMessage("Supabase keepalive OK", 4000)),
             lambda error: self.status_bar.showMessage(
                 f"Keepalive error: {error.strip().splitlines()[-1]}", 8000
             ),
@@ -1062,7 +1146,6 @@ class StudentApp(QMainWindow):
             return
 
         # 2. Show a progress dialog overlay
-        from PyQt6.QtWidgets import QProgressDialog
         self.update_progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
         self.update_progress.setWindowTitle(f"Updating to v{latest_version}")
         self.update_progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -1084,8 +1167,15 @@ class StudentApp(QMainWindow):
             url=url,
             progress_callback=lambda p: QTimer.singleShot(0, lambda: self.update_progress.setValue(p)),
             success_callback=lambda: QTimer.singleShot(0, lambda: self.update_progress.setLabelText("Restarting app to apply update...")),
-            error_callback=lambda err: QTimer.singleShot(0, lambda: QMessageBox.critical(self, "Update Failed", str(err)))
+            error_callback=lambda err: QTimer.singleShot(0, lambda: self._on_live_update_failed(err))
         )
+
+    def _on_live_update_failed(self, error):
+        progress = getattr(self, "update_progress", None)
+        if progress is not None:
+            progress.close()
+        QMessageBox.critical(self, "Update Failed", str(error))
+        self.update_timer.start(1800000)
 
     def _update_field(self, table: str, field: str, value, record_id):
         try:
@@ -1198,13 +1288,16 @@ class StudentApp(QMainWindow):
         def apply_rows(raw_rows):
             if request_id != self._dashboard_request:
                 return
-            rows = self._filter_current_master_rows(raw_rows)
+            # Dashboard totals should be the same on every PC. Workbook filtering
+            # is still used by the Students view, but not for the overview cards.
+            rows = list(raw_rows)
             counts = self.dashboard_service.summary_counts(rows)
             self.lbl_total_val.setText(str(counts["total"]))
             self.lbl_active_val.setText(str(counts["active"]))
             self.lbl_inactive_val.setText(str(counts["inactive"]))
             self.lbl_graduated_val.setText(str(counts["graduated"]))
             self._refresh_dashboard_lists(rows)
+            self._mark_database_updated()
 
         def show_error(error):
             if request_id != self._dashboard_request:
@@ -1773,6 +1866,7 @@ class StudentApp(QMainWindow):
             data = self.coordinator_repository.list_coordinators()
             self._coord_all_rows = data
             self._populate_coord_table(data)
+            self._mark_database_updated()
         except Exception as e:
             self.coord_status.setText(f"Could not load coordinators: {e}")
 
