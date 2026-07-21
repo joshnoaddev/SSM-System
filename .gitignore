@@ -1,6 +1,14 @@
 # Local AI handoff artifact
 claude-handoff.diff
+_supabase_backups/
+.venv/
+.penpot-mcp/
 
 # Python bytecode
 __pycache__/
 *.py[cod]
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example

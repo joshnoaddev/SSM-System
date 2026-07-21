@@ -11,6 +11,34 @@ DashboardKey = Tuple[str, str, str]
 class DashboardService:
     """Build dashboard summaries from student rows without PyQt dependencies."""
 
+    def latest_sync_cohort(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Return the roster written by the latest Google Sheet transaction.
+
+        Workbook sync preserves older and manually created database records.
+        Every row touched by one sync receives the same ``sheet_synced_at``
+        transaction timestamp, so the newest timestamp identifies the current
+        source roster. Legacy databases without sync metadata keep their
+        previous all-row behavior.
+        """
+        copied = [dict(row) for row in rows]
+        sync_timestamps = [
+            str(row.get("sheet_synced_at") or "").strip()
+            for row in copied
+            if str(row.get("sheet_synced_at") or "").strip()
+        ]
+        if not sync_timestamps:
+            return copied
+
+        latest_timestamp = max(sync_timestamps)
+        return [
+            row
+            for row in copied
+            if str(row.get("sheet_synced_at") or "").strip() == latest_timestamp
+        ]
+
     def summary_counts(self, rows: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
         statuses = [self.status_bucket(row.get("status")) for row in rows]
         return {
@@ -48,7 +76,12 @@ class DashboardService:
         counts = Counter((row.get("sponsor") or "No sponsor").strip() or "No sponsor" for row in rows)
         return counts.most_common(limit)
 
-    def attention_items(self, rows: Sequence[Mapping[str, Any]], *, limit: int = 12) -> List[Dict[str, Any]]:
+    def attention_items(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        limit: Optional[int] = 12,
+    ) -> List[Dict[str, Any]]:
         attention = []
         required = ("contact", "school", "birthday", "photo_url")
         for student in rows:
@@ -61,18 +94,21 @@ class DashboardService:
                 name = f"{student.get('last_name', '')}, {student.get('first_name', '')}".strip(", ")
                 attention.append((len(missing), name or "Unnamed student", ", ".join(missing[:3]), student.get("id")))
 
-        return [
+        items = [
             {"missing_count": count, "name": name, "missing_text": missing_text, "student_id": student_id}
-            for count, name, missing_text, student_id in sorted(attention, reverse=True)[:limit]
+            for count, name, missing_text, student_id in sorted(attention, reverse=True)
         ]
+        return items if limit is None else items[:limit]
 
     def build_lists(self, rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
         deduped = self.dedupe_students(rows)
+        attention = self.attention_items(deduped, limit=None)
         return {
             "rows": deduped,
             "area_counts": self.area_counts(deduped),
             "sponsor_counts": self.sponsor_counts(deduped),
-            "attention": self.attention_items(deduped),
+            "attention": attention[:12],
+            "attention_count": len(attention),
         }
 
     def student_key(self, row: Mapping[str, Any]) -> Optional[DashboardKey]:
@@ -87,6 +123,6 @@ class DashboardService:
     def row_score(self, row: Mapping[str, Any]) -> int:
         fields = ("contact", "school", "birthday", "photo_url", "sponsor", "area", "grade")
         score = sum(1 for field in fields if str(row.get(field) or "").strip())
-        if str(row.get("status") or "") == "Active":
+        if self.status_bucket(row.get("status")) == "active":
             score += 1
         return score

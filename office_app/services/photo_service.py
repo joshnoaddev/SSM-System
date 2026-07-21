@@ -9,9 +9,10 @@ from typing import Any, List, Optional
 
 
 def _photo_config() -> tuple[str, str, str]:
-    from office_app.app_config import PHOTO_BUCKET, SUPABASE_KEY, SUPABASE_URL
+    from office_app.app_config import PHOTO_BUCKET, get_supabase_config
 
-    return SUPABASE_URL, SUPABASE_KEY, PHOTO_BUCKET
+    supabase_url, supabase_key = get_supabase_config()
+    return supabase_url, supabase_key, PHOTO_BUCKET
 
 
 class PhotoService:
@@ -23,6 +24,7 @@ class PhotoService:
         supabase_key: Optional[str] = None,
         photo_bucket: Optional[str] = None,
         cache_dir: Optional[str] = None,
+        client=None,
     ) -> None:
         if not (supabase_url and supabase_key and photo_bucket):
             cfg_url, cfg_key, cfg_bucket = _photo_config()
@@ -33,9 +35,21 @@ class PhotoService:
         self.supabase_url = supabase_url.rstrip("/")
         self.supabase_key = supabase_key
         self.photo_bucket = photo_bucket
+        self.client = client
         self.cache_dir = cache_dir or os.path.join(
             os.path.expanduser("~"), ".ssm_photo_cache"
         )
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Use a session JWT when present, otherwise the shared office key."""
+        access_token = ""
+        if self.client is not None:
+            session = self.client.auth.get_session()
+            access_token = getattr(session, "access_token", "") if session else ""
+        return {
+            "Authorization": f"Bearer {access_token or self.supabase_key}",
+            "apikey": self.supabase_key,
+        }
 
     def _photo_cache_path(self, url: str) -> str:
         """Stable local cache path derived from the URL filename."""
@@ -79,8 +93,7 @@ class PhotoService:
             f"{self.photo_bucket}/{remote_path}"
         )
         headers = {
-            "Authorization": f"Bearer {self.supabase_key}",
-            "apikey": self.supabase_key,
+            **self._auth_headers(),
             "Content-Type": content_type,
             "x-upsert": "true",
         }
@@ -154,10 +167,7 @@ class PhotoService:
                 request = urllib.request.Request(
                     storage_url,
                     method="DELETE",
-                    headers={
-                        "Authorization": f"Bearer {self.supabase_key}",
-                        "apikey": self.supabase_key,
-                    },
+                    headers=self._auth_headers(),
                 )
                 with urllib.request.urlopen(request, timeout=timeout):
                     pass
@@ -170,7 +180,7 @@ class PhotoService:
             after = url.split(marker, 1)[1]
             return (
                 f"{self.supabase_url}/storage/v1/object/authenticated/{after}",
-                {"Authorization": f"Bearer {self.supabase_key}", "apikey": self.supabase_key},
+                self._auth_headers(),
             )
         return url, {"User-Agent": "Mozilla/5.0"}
     def _cache_uploaded_photo(self, source_path: str, url: str) -> Optional[str]:
@@ -205,4 +215,3 @@ class PhotoService:
                     file.write("\n".join(log))
             except Exception:
                 pass
-

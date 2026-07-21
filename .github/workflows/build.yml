@@ -21,15 +21,18 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
+        pip install -r requirements-build.txt
+
+    - name: Run regression tests
+      env:
+        QT_QPA_PLATFORM: offscreen
+      run: python -m unittest discover -s tests -v
 
     - name: Build with PyInstaller
-      run: |
-        pyinstaller --noconsole --onefile --name "SSM_Student_System" --add-data "assets;assets" app.py
+      run: pyinstaller --clean --noconfirm SSM_Student_Profiling.spec
 
     - name: Upload Executable Artifact
       uses: actions/upload-artifact@v4
       with:
         name: SSM_Windows_Executable
-        path: dist/SSM_Student_System.exe
+        path: dist/SSM_Student_Profiling.exe

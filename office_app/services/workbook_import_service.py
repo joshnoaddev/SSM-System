@@ -27,6 +27,18 @@ class WorkbookImportService:
         self.coordinator_repository = coordinator_repository or CoordinatorRepository()
         self.workbook_repository = workbook_repository or WorkbookRepository()
 
+    def _get_student_id_map(self) -> Dict[tuple[str, str], str]:
+        """Fetch all students and return a map from (last, first) to ID."""
+        all_students = self.student_repository.list_students(columns="id,last_name,first_name")
+        return {
+            (
+                str(s.get("last_name") or "").strip().lower(),
+                str(s.get("first_name") or "").strip().lower(),
+            ): s["id"]
+            for s in all_students
+            if s.get("id")
+        }
+
     def sync_sheet(self, workbook: Any, sheet_name: str) -> Optional[int]:
         lower = sheet_name.lower()
         if "coordinator" in lower:
@@ -131,6 +143,7 @@ class WorkbookImportService:
     def sync_donor_sheet(self, workbook: Any, sheet_name: str) -> int:
         rows = self.sheet_values(workbook, sheet_name)
         school_year = self.school_year_from_sheet(sheet_name)
+        student_id_map = self._get_student_id_map()
         records: List[Dict[str, Any]] = []
         donor_name = ""
         header: Dict[str, int] = {}
@@ -154,11 +167,14 @@ class WorkbookImportService:
             if not header or last.lower() == "last name":
                 continue
 
+            student_id = student_id_map.get((last.lower(), first.lower()))
+            if not student_id:
+                continue
+
             records.append({
                 "school_year": school_year,
                 "donor_name": donor_name,
-                "last_name": last,
-                "first_name": first,
+                "student_id": student_id,
                 "location": self.safe_cell(row, header.get("location")),
                 "level": self.safe_cell(row, header.get("level")),
                 "sponsor": self.safe_cell(row, header.get("sponsor")),
@@ -171,6 +187,7 @@ class WorkbookImportService:
 
     def sync_movements_sheet(self, workbook: Any, sheet_name: str) -> int:
         rows = self.sheet_values(workbook, sheet_name)
+        student_id_map = self._get_student_id_map()
         records: List[Dict[str, Any]] = []
         category = ""
         header: Dict[str, int] = {}
@@ -193,10 +210,13 @@ class WorkbookImportService:
             if not header or last.lower() == "last name":
                 continue
 
+            student_id = student_id_map.get((last.lower(), first.lower()))
+            if not student_id:
+                continue
+
             records.append({
                 "category": category,
-                "last_name": last,
-                "first_name": first,
+                "student_id": student_id,
                 "location": self.safe_cell(row, header.get("location")),
                 "level": self.safe_cell(row, header.get("level")),
                 "remarks": self.safe_cell(row, header.get("remarks")),

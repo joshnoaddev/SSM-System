@@ -7,7 +7,7 @@ import threading
 
 class UpdaterService:
     # Change this whenever you compile a new .exe!
-    CURRENT_VERSION = "1.0.5"
+    CURRENT_VERSION = "1.0.17"
     MIN_INSTALLER_BYTES = 40 * 1024 * 1024
 
     def __init__(self, client):

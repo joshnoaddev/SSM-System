@@ -73,6 +73,15 @@ class StudentRepository:
         response = self.sb.table("students").delete().eq("id", student_id).execute()
         return list(response.data or [])
 
+    def delete_student_with_related(self, student_id: Any) -> Dict[str, List[Dict[str, Any]]]:
+        """Delete records that reference a student, then delete the student row."""
+        deleted: Dict[str, List[Dict[str, Any]]] = {}
+        for table_name in ("expenses", "budgets", "donor_students", "student_movements"):
+            response = self.sb.table(table_name).delete().eq("student_id", student_id).execute()
+            deleted[table_name] = list(response.data or [])
+        deleted["students"] = self.delete_student(student_id)
+        return deleted
+
     def update_photo_url(self, student_id: Any, photo_url: Optional[str]) -> List[Dict[str, Any]]:
         return self.update_student(student_id, {"photo_url": photo_url})
 

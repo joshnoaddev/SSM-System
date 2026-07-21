@@ -1,15 +1,15 @@
-import os
 import re
+from pathlib import Path
 
-FILE_PATH = "office_app/services/updater_service.py"
+FILE_PATH = Path("office_app/services/updater_service.py")
 
 def bump():
     print("--- SSM Version Bumper ---")
-    if not os.path.exists(FILE_PATH):
+    if not FILE_PATH.exists():
         print(f"Error: Could not find {FILE_PATH}")
         return
 
-    with open(FILE_PATH, "r") as file:
+    with open(FILE_PATH, "r", encoding="utf-8") as file:
         content = file.read()
 
     # Search for the CURRENT_VERSION = "x.y.z" line
@@ -28,7 +28,7 @@ def bump():
     new_content = content[:match.start(1)] + new_version + content[match.end(3):]
 
     # Save the file back
-    with open(FILE_PATH, "w") as file:
+    with open(FILE_PATH, "w", encoding="utf-8") as file:
         file.write(new_content)
 
     print(f"✅ Code updated successfully! New version is: {new_version}")

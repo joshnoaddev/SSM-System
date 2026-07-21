@@ -10,7 +10,7 @@ from office_app.repositories.expense_repository import ExpenseRepository
 class ExpenseService:
     """Coordinates expense validation, totals, and budget calculations."""
 
-    ALL_YEARS = "All Years"
+    ALL_YEARS = "All years"
 
     def __init__(self, repository: Optional[ExpenseRepository] = None) -> None:
         self.repository = repository or ExpenseRepository()
@@ -75,6 +75,26 @@ class ExpenseService:
             }
         )
 
+    def get_financial_summary(
+        self,
+        student_id: Any,
+        school_year: Optional[str] = ALL_YEARS,
+    ) -> Optional[Dict[str, Any]]:
+        return self.repository.get_financial_summary(
+            student_id,
+            self._school_year_filter(school_year),
+        )
+
+    def get_financial_summaries(
+        self,
+        student_ids: List[Any],
+        school_year: Optional[str] = ALL_YEARS,
+    ) -> Dict[Any, Dict[str, Any]]:
+        return self.repository.list_financial_summaries(
+            student_ids,
+            self._school_year_filter(school_year),
+        )
+
     @staticmethod
     def build_expense_payload(
         student_id: Any,
@@ -123,49 +143,67 @@ class ExpenseService:
                 continue
         return total
 
-    @staticmethod
-    def calculate_budget_percentage(total_spent: Any, budget_amount: Any) -> int:
-        budget = ExpenseService.parse_amount(budget_amount)
-        spent = ExpenseService.parse_amount(total_spent)
-        if budget <= 0:
-            return 0
-        return min(int((spent / budget) * 100), 100)
-
-    @staticmethod
-    def is_over_budget(total_spent: Any, budget_amount: Any) -> bool:
-        return ExpenseService.parse_amount(total_spent) > ExpenseService.parse_amount(
-            budget_amount
-        )
-
     @classmethod
-    def budget_usage(cls, total_spent: Any, budget_amount: Any) -> Dict[str, Any]:
-        spent = cls.parse_amount(total_spent)
-        budget = cls.parse_amount(budget_amount)
-        percent = cls.calculate_budget_percentage(spent, budget)
-        remaining = budget - spent
-        over_budget = spent > budget
-        state = cls.budget_state(percent)
+    def budget_usage(cls, summary: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not summary:
+            return {
+                "budget": 0, "spent": 0, "percent": 0, "remaining": 0,
+                "over_budget": False, "state": "neutral",
+                "message": "No financial activity is available.",
+            }
+
+        spent = summary.get("total_expenses", 0)
+        budget = summary.get("total_budget", 0)
+        remaining = summary.get("remaining_balance", 0)
+        if budget <= 0:
+            return {
+                "budget": budget, "spent": spent, "percent": 0,
+                "remaining": remaining, "over_budget": False,
+                "state": "neutral",
+                "message": "No budget allocated for this school year.",
+            }
+
+        over_budget = remaining < 0
+
+        percent = min(int((spent / budget) * 100), 100) if not over_budget else 100
+        state = "danger" if over_budget else cls.budget_state(percent)
 
         if over_budget:
             message = (
-                f"Over budget by PHP {spent - budget:,.2f}  |  "
-                f"Budget: PHP {budget:,.2f}  |  Spent: PHP {spent:,.2f}"
+                f"Over budget by PHP {abs(remaining):,.2f}  \u00b7  "
+                f"PHP {spent:,.2f} spent of PHP {budget:,.2f}"
             )
         else:
             message = (
-                f"PHP {remaining:,.2f} remaining  |  "
-                f"Budget: PHP {budget:,.2f}  |  Spent: PHP {spent:,.2f}  "
-                f"({percent}%)"
+                f"{percent}% used  \u00b7  "
+                f"PHP {spent:,.2f} of PHP {budget:,.2f}  \u00b7  "
+                f"PHP {remaining:,.2f} remaining"
             )
 
         return {
-            "budget": budget,
-            "spent": spent,
-            "percent": percent,
-            "remaining": remaining,
-            "over_budget": over_budget,
-            "state": "danger" if over_budget else state,
-            "message": message,
+            "budget": budget, "spent": spent, "percent": percent,
+            "remaining": remaining, "over_budget": over_budget,
+            "state": state, "message": message,
+        }
+
+    @classmethod
+    def budget_card_status(cls, summary: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        usage = cls.budget_usage(summary)
+        budget = usage["budget"]
+        spent = usage["spent"]
+        percent = usage["percent"]
+        if budget <= 0:
+            return {
+                **usage,
+                "allocated": False,
+                "title": "No budget allocated",
+                "detail": "",
+            }
+        return {
+            **usage,
+            "allocated": True,
+            "title": f"{percent}% used",
+            "detail": f"PHP {spent:,.0f} / {budget:,.0f}",
         }
 
     @staticmethod
@@ -189,4 +227,4 @@ class ExpenseService:
 
     @classmethod
     def _is_all_years(cls, school_year: Optional[str]) -> bool:
-        return str(school_year or "").strip() == cls.ALL_YEARS
+        return str(school_year or "").strip().casefold() == cls.ALL_YEARS.casefold()

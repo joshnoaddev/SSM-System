@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -20,6 +21,31 @@ def refresh_style(widget: QWidget) -> None:
     widget.update()
 
 
+def set_content_hugging_button(
+    button: QPushButton,
+    *,
+    min_width: int = 52,
+    height: int = 40,
+) -> QPushButton:
+    """Keep a text action as narrow as its styled label and padding allow.
+
+    Resetting the horizontal bounds is important because several legacy
+    screens used ``setFixedWidth``.  ``Maximum`` asks Qt layouts to respect
+    the style-derived size hint instead of distributing spare row width into
+    the button, while the fixed height preserves a reliable hit target.
+    """
+    button.setMinimumSize(0, 0)
+    button.setMaximumSize(16777215, 16777215)
+    button.setMinimumWidth(min_width)
+    button.setFixedHeight(height)
+    button.setSizePolicy(
+        QSizePolicy.Policy.Maximum,
+        QSizePolicy.Policy.Fixed,
+    )
+    button.updateGeometry()
+    return button
+
+
 class Card(QFrame):
     """Standard surface container with consistent role, spacing, and depth."""
 
@@ -31,7 +57,7 @@ class Card(QFrame):
         tone: str | None = None,
         margins=(Spacing.M, Spacing.M, Spacing.M, Spacing.M),
         spacing=Spacing.XS,
-        shadow=True,
+        shadow=False,
     ):
         super().__init__(parent)
         self.setObjectName("Card")
@@ -46,9 +72,9 @@ class Card(QFrame):
 
         if shadow:
             effect = QGraphicsDropShadowEffect(self)
-            effect.setBlurRadius(24)
-            effect.setOffset(0, 4)
-            effect.setColor(theme_color("shadow", 28))
+            effect.setBlurRadius(18)
+            effect.setOffset(0, 3)
+            effect.setColor(theme_color("shadow", 18))
             self.setGraphicsEffect(effect)
 
     def set_tone(self, tone: str) -> None:
@@ -65,6 +91,7 @@ class ActionButton(QPushButton):
         # are in effect from the very first paint, not just after a re-polish.
         self.setProperty("variant", variant)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        set_content_hugging_button(self)
         refresh_style(self)
 
     def set_variant(self, variant: str) -> None:
@@ -92,7 +119,7 @@ class StatusBadge(QLabel):
 class EmptyState(Card):
     """Reusable centered empty state with optional description and action."""
 
-    def __init__(self, title, description="", action=None, parent=None, *, shadow=True):
+    def __init__(self, title, description="", action=None, parent=None, *, shadow=False):
         layout = QVBoxLayout()
         super().__init__(
             parent,

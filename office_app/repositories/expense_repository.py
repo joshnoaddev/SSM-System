@@ -49,6 +49,99 @@ class ExpenseRepository:
         response = self.sb.table("expenses").delete().eq("id", expense_id).execute()
         return list(response.data or [])
 
+    def get_financial_summary(
+        self,
+        student_id: Any,
+        school_year: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self.list_financial_summaries([student_id], school_year).get(student_id)
+
+    def list_financial_summaries(
+        self,
+        student_ids: List[Any],
+        school_year: Optional[str] = None,
+    ) -> Dict[Any, Dict[str, Any]]:
+        if not student_ids:
+            return {}
+
+        summaries: Dict[Any, Dict[str, Any]] = {}
+        requested_ids = {
+            self._student_id_key(student_id): student_id
+            for student_id in student_ids
+        }
+        school_year_text = str(school_year or "").strip()
+        sy_filter = (
+            school_year
+            if school_year_text and school_year_text.casefold() != "all years"
+            else None
+        )
+
+        budget_query = (
+            self.sb.table("budgets")
+            .select("student_id,school_year,amount")
+            .in_("student_id", student_ids)
+        )
+        if sy_filter:
+            budget_query = budget_query.eq("school_year", sy_filter)
+        budget_rows = list(budget_query.execute().data or [])
+
+        expense_query = (
+            self.sb.table("expenses")
+            .select("student_id,school_year,amount")
+            .in_("student_id", student_ids)
+        )
+        if sy_filter:
+            expense_query = expense_query.eq("school_year", sy_filter)
+        expense_rows = list(expense_query.execute().data or [])
+
+        def summary_for(student_id: Any) -> Dict[str, Any]:
+            requested_id = requested_ids.get(
+                self._student_id_key(student_id),
+                student_id,
+            )
+            return summaries.setdefault(
+                requested_id,
+                {
+                    "student_id": requested_id,
+                    "school_year": sy_filter or "All years",
+                    "total_budget": 0.0,
+                    "total_expenses": 0.0,
+                    "remaining_balance": 0.0,
+                },
+            )
+
+        for row in budget_rows:
+            student_id = row.get("student_id")
+            if student_id is None:
+                continue
+            summary = summary_for(student_id)
+            try:
+                summary["total_budget"] += float(row.get("amount") or 0)
+            except (TypeError, ValueError):
+                continue
+
+        for row in expense_rows:
+            student_id = row.get("student_id")
+            if student_id is None:
+                continue
+            summary = summary_for(student_id)
+            try:
+                summary["total_expenses"] += float(row.get("amount") or 0)
+            except (TypeError, ValueError):
+                continue
+
+        for summary in summaries.values():
+            summary["remaining_balance"] = (
+                summary["total_budget"] - summary["total_expenses"]
+            )
+
+        return summaries
+
+    @staticmethod
+    def _student_id_key(student_id: Any) -> str:
+        """Normalize equivalent UUID/text IDs without changing public keys."""
+        return str(student_id or "").strip().casefold()
+
     def list_budgets(self, student_id: Any) -> List[Dict[str, Any]]:
         response = (
             self.sb.table("budgets")
@@ -87,4 +180,3 @@ class ExpenseRepository:
             .execute()
         )
         return list(response.data or [])
-

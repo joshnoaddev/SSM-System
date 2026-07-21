@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from PyQt6.QtCore import QItemSelectionModel, QTimer, Qt, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QItemSelectionModel, QSize, QTimer, Qt, QThreadPool, pyqtSignal
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QListView, QListWidget, QListWidgetItem, QMessageBox, QStackedWidget,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QFileDialog, QFrame, QHBoxLayout, QListView,
+    QListWidgetItem, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from office_app.ui import ActionButton, Card, EmptyState, theme_color
+from office_app.ui.fluent import (
+    BodyLabel, CardWidget, ComboBox, LineEdit, ListWidget, MessageBox,
+    PushButton, StrongBodyLabel, TitleLabel,
+)
+from office_app.ui.components import ActionButton, set_content_hugging_button
+from office_app.ui import theme_color
 from office_app.ui.views.student_list_model import (
     StudentCardDelegate, StudentListModel, StudentSkeleton,
 )
@@ -31,6 +36,7 @@ class StudentListView(QWidget):
         student_excel_service,
         run_background_fn: Callable | None = None,
         *,
+        expense_service=None,
         filter_current_rows_fn: Callable[[Sequence[Mapping[str, Any]]], list] | None = None,
         status_message_fn: Callable[[str, int], None] | None = None,
         parent=None,
@@ -39,6 +45,7 @@ class StudentListView(QWidget):
         self.student_repository = student_repository
         self.student_list_service = student_list_service
         self.student_excel_service = student_excel_service
+        self.expense_service = expense_service
         self._student_service = student_list_service.student_service
         self._run_background_fn = run_background_fn
         self._filter_current_rows = filter_current_rows_fn or (lambda rows: list(rows))
@@ -57,55 +64,88 @@ class StudentListView(QWidget):
         self._loading_page = False
         self._setup_ui()
 
-    @staticmethod
-    def _secondary_button(text):
-        button = ActionButton(text, variant="secondary")
-        button.setObjectName("SecondaryBtn")
-        return button
-
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        filter_card = Card()
-        filters = QVBoxLayout(filter_card)
-        filters.setContentsMargins(12, 10, 12, 10)
-        filters.setSpacing(8)
-
+        filter_bar = QFrame()
+        filter_bar.setObjectName("StudentFilterBar")
+        filters = QVBoxLayout(filter_bar)
+        filters.setContentsMargins(0, 0, 0, 12)
+        filters.setSpacing(0)
         search_row = QHBoxLayout()
         search_row.setSpacing(8)
-        self.search_name = QLineEdit()
-        self.search_name.setPlaceholderText("Search name")
+        self.search_name = LineEdit()
+        self.search_name.setPlaceholderText("Search students")
+        self.search_name.setAccessibleName("Search students by name")
+        self.search_name.setClearButtonEnabled(True)
         self.search_name.setMinimumWidth(180)
-        self.search_sponsor = QLineEdit()
-        self.search_sponsor.setPlaceholderText("Filter sponsor")
+        self.search_name.setMaximumWidth(460)
+        self.search_sponsor = LineEdit()
+        self.search_sponsor.setPlaceholderText("Search sponsors")
+        self.search_sponsor.setAccessibleName("Search students by sponsor")
+        self.search_sponsor.setClearButtonEnabled(True)
         self.search_sponsor.setMinimumWidth(180)
-        search_row.addWidget(self.search_name, 1)
-        search_row.addWidget(self.search_sponsor, 1)
+        self.search_sponsor.setMaximumWidth(360)
 
-        self.filter_grade = QComboBox()
-        self.filter_grade.addItem("All Grades")
+        self.filter_grade = ComboBox()
+        self.filter_grade.addItem(self.student_list_service.ALL_GRADES)
+        self.filter_grade.setAccessibleName("Filter students by grade")
         self.filter_grade.setMinimumWidth(120)
-        self.filter_status = QComboBox()
+        self.filter_grade.setMaximumWidth(140)
+        self.filter_status = ComboBox()
         self.filter_status.addItems(["All", "Active", "Inactive/Removed", "Graduated"])
+        self.filter_status.setAccessibleName("Filter students by status")
         self.filter_status.setMinimumWidth(150)
-        search_row.addWidget(self.filter_grade)
-        search_row.addWidget(self.filter_status)
+        self.filter_status.setMaximumWidth(190)
 
-        clear_btn = self._secondary_button("Clear")
-        refresh_btn = self._secondary_button("Refresh")
-        self.import_btn = self._secondary_button("Import")
-        self.export_btn = self._secondary_button("Export")
+        def add_filter_field(label_text, field, stretch=0):
+            field_group = QWidget()
+            field_group.setObjectName("StudentFilterField")
+            field_layout = QVBoxLayout(field_group)
+            field_layout.setContentsMargins(0, 0, 0, 0)
+            field_layout.setSpacing(4)
+            label = StrongBodyLabel(label_text)
+            label.setObjectName("FieldLabel")
+            field_layout.addWidget(label)
+            field_layout.addWidget(field)
+            search_row.addWidget(field_group, stretch)
+
+        add_filter_field("Student name", self.search_name, 1)
+        add_filter_field("Sponsor", self.search_sponsor, 1)
+        add_filter_field("Grade", self.filter_grade)
+        add_filter_field("Status", self.filter_status)
+        search_row.addStretch(1)
+        filters.addLayout(search_row)
+        layout.addWidget(filter_bar)
+
+        clear_btn = ActionButton("Clear", variant="tertiary")
+        refresh_btn = ActionButton("Refresh", variant="tertiary")
+        self.import_btn = ActionButton("Import", variant="secondary")
+        self.export_btn = ActionButton("Export", variant="secondary")
+        clear_btn.setToolTip("Reset all student filters")
+        refresh_btn.setToolTip("Reload the current result set")
+        self.import_btn.setToolTip("Import student records from an Excel workbook")
+        self.export_btn.setToolTip("Export the filtered student list to Excel")
+        results_toolbar = QFrame()
+        results_toolbar.setObjectName("StudentResultsToolbar")
+        actions_row = QHBoxLayout(results_toolbar)
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(6)
+        self.count_label = BodyLabel("All students")
+        self.count_label.setObjectName("StudentDirectoryLabel")
+        actions_row.addWidget(self.count_label)
+        actions_row.addStretch(1)
         for button in (clear_btn, refresh_btn, self.import_btn, self.export_btn):
             button.setProperty("density", "compact")
-            search_row.addWidget(button)
+            set_content_hugging_button(button)
+            actions_row.addWidget(button)
         clear_btn.clicked.connect(self.clear_student_filters)
         refresh_btn.clicked.connect(self.load_student_list)
         self.import_btn.clicked.connect(self.import_from_excel)
         self.export_btn.clicked.connect(self.export_to_excel)
-        filters.addLayout(search_row)
-        layout.addWidget(filter_card)
+        layout.addWidget(results_toolbar)
 
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -117,42 +157,51 @@ class StudentListView(QWidget):
         self.filter_status.currentTextChanged.connect(self.load_student_list)
 
         # Kept as a hidden compatibility control for export state restoration.
-        self.area_select = QComboBox()
-        self.area_select.addItem("All Areas")
+        self.area_select = ComboBox()
+        self.area_select.addItem("All areas")
         self.area_select.hide()
 
-        self.count_label = QLabel("Students")
-        self.count_label.setObjectName("CountBanner")
-        self.count_label.setMinimumHeight(36)
-        layout.addWidget(self.count_label)
-
         content = QHBoxLayout()
-        content.setSpacing(10)
-        facet_card = Card(shadow=False)
+        content.setSpacing(12)
+        facet_card = CardWidget()
+        self.area_facet_card = facet_card
         facet_card.setObjectName("AreaFacetCard")
-        facet_card.setFixedWidth(190)
+        facet_card.setFixedWidth(174)
+        facet_card.setFixedHeight(280)
         facet_layout = QVBoxLayout(facet_card)
         facet_layout.setContentsMargins(8, 10, 8, 8)
         facet_layout.setSpacing(6)
-        facet_title = QLabel("Areas")
+        facet_title = StrongBodyLabel("Areas")
         facet_title.setObjectName("CardTitle")
         facet_layout.addWidget(facet_title)
-        self.area_facet = QListWidget()
+        self.area_facet = ListWidget()
         self.area_facet.setObjectName("AreaFacet")
+        self.area_facet.setAccessibleName("Filter students by area")
+        self.area_facet.setAccessibleDescription(
+            "Choose an area to limit the student directory."
+        )
         self.area_facet.setFrameShape(QFrame.Shape.NoFrame)
         self.area_facet.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.area_facet.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.area_facet.itemClicked.connect(self._on_area_selected)
         facet_layout.addWidget(self.area_facet, 1)
-        content.addWidget(facet_card)
+        content.addWidget(facet_card, alignment=Qt.AlignmentFlag.AlignTop)
 
         self.student_model = StudentListModel(self)
         self.student_model.fetch_more_requested.connect(lambda: self._load_page(reset=False))
         self.list_widget = QListView()
         self.list_widget.setObjectName("StudentList")
+        self.list_widget.setAccessibleName("Student records")
+        self.list_widget.setAccessibleDescription(
+            "Select a student row to open the complete profile."
+        )
         self.list_widget.setModel(self.student_model)
         self.list_widget.setItemDelegate(StudentCardDelegate(self.list_widget))
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list_widget.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.list_widget.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self.list_widget.setUniformItemSizes(True)
         self.list_widget.setMouseTracking(True)
         self.list_widget.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -160,11 +209,27 @@ class StudentListView(QWidget):
         self.list_widget.activated.connect(self._on_student_index)
 
         self.loading_state = StudentSkeleton()
-        self.empty_state = EmptyState(
-            "No students found",
-            "No students match the current filters. Try clearing a filter or choosing another area.",
-            shadow=False,
+        self.empty_state = CardWidget()
+        empty_layout = QVBoxLayout(self.empty_state)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state.title_label = TitleLabel("No students found")
+        self.empty_state.description_label = BodyLabel(
+            "No students match the current filters. Try clearing a filter or choosing another area."
         )
+        self.empty_state.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state.description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state.description_label.setWordWrap(True)
+        self.empty_state_action = PushButton("Clear filters")
+        set_content_hugging_button(self.empty_state_action)
+        self.empty_state_action.clicked.connect(self._run_empty_state_action)
+        empty_layout.addStretch(1)
+        empty_layout.addWidget(self.empty_state.title_label)
+        empty_layout.addWidget(self.empty_state.description_label)
+        empty_layout.addWidget(
+            self.empty_state_action,
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
+        empty_layout.addStretch(1)
         self.results_stack = QStackedWidget()
         self.results_stack.addWidget(self.list_widget)
         self.results_stack.addWidget(self.loading_state)
@@ -216,7 +281,7 @@ class StudentListView(QWidget):
         self._status_message("Loading students...", 30000)
 
         def fetch_rows():
-            return self.student_repository.search_students(
+            rows = self.student_repository.search_students(
                 columns=columns,
                 name_query=name_q or None,
                 sponsor_query=sponsor_q or None,
@@ -226,10 +291,17 @@ class StudentListView(QWidget):
                 limit=self._page_size,
                 offset=offset,
             )
+            if self.expense_service is None:
+                return rows, {}
 
-        def apply_rows(raw_rows):
+            student_ids = [row.get("id") for row in rows if row.get("id")]
+            summaries = self.expense_service.get_financial_summaries(student_ids)
+            return rows, summaries
+
+        def apply_rows(result):
             if request_id != self._student_list_request:
                 return
+            raw_rows, summaries = result
             self._loading_page = False
             filtered = self.student_list_service.filter_rows(
                 self._filter_current_rows(raw_rows), status=status, grade=grade,
@@ -240,7 +312,14 @@ class StudentListView(QWidget):
                 full_status, status_text, _ = self._student_service.status_style(row.get("status"))
                 row["_full_status"] = full_status
                 row["_status_text"] = status_text
+                row["_grade_text"] = self._student_service.format_grade_label(
+                    row.get("grade")
+                )
                 row["_completion"] = self._student_service.profile_completion_percent(row)
+                if self.expense_service is not None:
+                    row["_budget_status"] = self.expense_service.budget_card_status(
+                        summaries.get(row.get("id"))
+                    )
                 rows.append(row)
 
             has_more = len(raw_rows) == self._page_size
@@ -266,9 +345,14 @@ class StudentListView(QWidget):
             self.student_model.append_rows([], has_more=False)
             if self.student_model.rowCount() == 0:
                 self.empty_state.title_label.setText("Could not load students")
-                self.empty_state.description_label.setText(error.strip().splitlines()[-1])
+                self.empty_state.description_label.setText(
+                    "Check the office database connection, then try again."
+                )
+                self.empty_state_action.setText("Try again")
+                self.empty_state_action.setProperty("mode", "retry")
                 self.results_stack.setCurrentWidget(self.empty_state)
-            self._status_message(f"Load error: {error.strip().splitlines()[-1]}", 8000)
+            logging.getLogger(__name__).error("Student list load failed:\n%s", error)
+            self._status_message("Could not load student records", 8000)
 
         return self._run_background(fetch_rows, apply_rows, show_error)
 
@@ -283,6 +367,12 @@ class StudentListView(QWidget):
             widget.blockSignals(False)
         self._select_area("", reload=False)
         self.load_student_list()
+
+    def _run_empty_state_action(self):
+        if self.empty_state_action.property("mode") == "retry":
+            self.load_student_list()
+            return
+        self.clear_student_filters()
 
     def refresh_area_dropdown(self):
         current = self._selected_area
@@ -300,18 +390,22 @@ class StudentListView(QWidget):
             self._area_options, self._area_counts = result
             self.area_facet.clear()
             total = sum(self._area_counts.values())
-            all_item = QListWidgetItem(f"All Students  ({total})")
+            all_item = QListWidgetItem(f"All students  ({total})")
             all_item.setData(Qt.ItemDataRole.UserRole, "")
+            all_item.setSizeHint(QSize(0, 42))
             self.area_facet.addItem(all_item)
             self.area_select.blockSignals(True)
             self.area_select.clear()
-            self.area_select.addItem("All Areas")
+            self.area_select.addItem("All areas")
             for area in self._area_options:
                 item = QListWidgetItem(f"{area}  ({self._area_counts[area]})")
                 item.setData(Qt.ItemDataRole.UserRole, area)
                 item.setToolTip(f"Filter students in {area}")
+                item.setSizeHint(QSize(0, 42))
                 self.area_facet.addItem(item)
                 self.area_select.addItem(area)
+            visible_rows = max(3, min(self.area_facet.count(), 7))
+            self.area_facet_card.setFixedHeight(70 + visible_rows * 42)
             self.area_select.blockSignals(False)
             target = current if current in self._area_options else ""
             self._select_area(target, reload=False)
@@ -338,7 +432,7 @@ class StudentListView(QWidget):
                 return
             self.filter_grade.blockSignals(True)
             self.filter_grade.clear()
-            self.filter_grade.addItem("All Grades")
+            self.filter_grade.addItem(self.student_list_service.ALL_GRADES)
             self.filter_grade.addItems(grades)
             self.filter_grade.setCurrentText(current) if current in grades else self.filter_grade.setCurrentIndex(0)
             self.filter_grade.blockSignals(False)
@@ -399,11 +493,13 @@ class StudentListView(QWidget):
             self.empty_state.description_label.setText(
                 f"No students{area_text} match the current filters. Try clearing a filter."
             )
+            self.empty_state_action.setText("Clear filters")
+            self.empty_state_action.setProperty("mode", "clear")
             self.results_stack.setCurrentWidget(self.empty_state)
         noun = "student" if count == 1 else "students"
-        area_label = self._selected_area or "All Students"
-        suffix = " — scroll for more" if has_more else ""
-        self.count_label.setText(f"{area_label} · {count} {noun} loaded{suffix}")
+        area_label = self._selected_area or "All students"
+        suffix = "  ·  Scroll for more" if has_more else ""
+        self.count_label.setText(f"{area_label}  ·  {count} {noun}{suffix}")
 
     def _on_student_index(self, index):
         student_id = index.data(Qt.ItemDataRole.UserRole)
@@ -420,7 +516,7 @@ class StudentListView(QWidget):
             self.filter_status.setCurrentText("All")
             self.search_name.clear()
             self.search_sponsor.clear()
-            self.filter_grade.setCurrentText("All Grades")
+            self.filter_grade.setCurrentText(self.student_list_service.ALL_GRADES)
             self.export_to_excel()
         finally:
             self.student_list_mode, status, name, sponsor, grade, area = old
@@ -436,7 +532,7 @@ class StudentListView(QWidget):
 
     def export_to_excel(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Excel File", "SSM_Students_Export.xlsx", "Excel Files (*.xlsx)"
+            self, "Save Excel file", "SSM_Students_Export.xlsx", "Excel files (*.xlsx)"
         )
         if not path:
             return None
@@ -452,7 +548,7 @@ class StudentListView(QWidget):
         def export():
             rows = self.student_repository.search_students(
                 columns=columns, name_query=name_q or None, sponsor_query=sponsor_q or None,
-                area=area_q if area_q and area_q != "Choose Area" else None,
+                area=area_q if area_q and area_q != "Choose area" else None,
                 area_exact=True, order_by=["area", "last_name", "id"],
             )
             rows = self.student_list_service.filter_rows(
@@ -466,19 +562,25 @@ class StudentListView(QWidget):
         def exported(count):
             self.export_btn.setEnabled(True)
             if not count:
-                QMessageBox.information(self, "Export", "No students to export with current filters.")
+                dlg = MessageBox("Export", "No students to export with current filters.", self)
+                dlg.cancelButton.hide()
+                dlg.exec()
                 return
-            QMessageBox.information(self, "Export Complete", f"Exported {count} students to:\n{path}")
+            dlg = MessageBox("Export complete", f"Exported {count} students to:\n{path}", self)
+            dlg.cancelButton.hide()
+            dlg.exec()
             self._status_message(f"Exported {count} students", 5000)
 
         def failed(error):
             self.export_btn.setEnabled(True)
-            QMessageBox.critical(self, "Export Failed", error.strip().splitlines()[-1])
+            dlg = MessageBox("Export failed", error.strip().splitlines()[-1], self)
+            dlg.cancelButton.hide()
+            dlg.exec()
 
         return self._run_background(export, exported, failed)
 
     def import_from_excel(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select Excel File", "", "Excel Files (*.xlsx)")
+        path, _ = QFileDialog.getOpenFileName(self, "Select Excel file", "", "Excel files (*.xlsx)")
         if not path:
             return None
         self.import_btn.setEnabled(False)
@@ -490,12 +592,16 @@ class StudentListView(QWidget):
         def imported(result):
             self.import_btn.setEnabled(True)
             sheet_name, count = result
-            QMessageBox.information(self, "Import Complete", f"Imported {count} students from '{sheet_name}'.")
+            dlg = MessageBox("Import complete", f"Imported {count} students from '{sheet_name}'.", self)
+            dlg.cancelButton.hide()
+            dlg.exec()
             self.students_imported.emit(count)
             self.students_changed.emit()
 
         def failed(error):
             self.import_btn.setEnabled(True)
-            QMessageBox.critical(self, "Import Failed", error.strip().splitlines()[-1])
+            dlg = MessageBox("Import failed", error.strip().splitlines()[-1], self)
+            dlg.cancelButton.hide()
+            dlg.exec()
 
         return self._run_background(import_students, imported, failed)

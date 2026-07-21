@@ -48,15 +48,48 @@ class StudentService:
 
     @staticmethod
     def _status_style(status: Any) -> StatusStyle:
-        normalized = str(status or "Active").strip()
-        folded = normalized.lower()
-        if folded in {"inactive/removed", "inactive", "removed"}:
+        normalized = " ".join(str(status or "Active").strip().split())
+        folded = normalized.casefold()
+        words = set(re.findall(r"[a-z]+", folded))
+        if "inactive" in words or "removed" in words:
             return "Inactive/Removed", "Inactive", "danger"
-        if folded == "graduated":
+        if any(word.startswith("graduat") for word in words):
             return "Graduated", "Graduated", "graduated"
         return "Active", "Active", "success"
 
     status_style = _status_style
+
+    @staticmethod
+    def _format_grade_label(value: Any) -> str:
+        """Return a compact, consistently capitalized grade label."""
+        text = " ".join(str(value or "").strip().split())
+        if not text:
+            return ""
+
+        folded = text.casefold()
+        grade_match = re.fullmatch(r"(?:grade|g)\s*[-:]?\s*(\d{1,2})", folded)
+        if grade_match:
+            return f"G{int(grade_match.group(1))}"
+
+        known = {
+            "graduating": "Graduating",
+            "graduated": "Graduated",
+            "kindergarten": "Kindergarten",
+            "kinder": "Kinder",
+            "pre school": "Pre-school",
+            "pre-school": "Pre-school",
+            "college": "College",
+        }
+        if folded in known:
+            return known[folded]
+
+        acronyms = {"als", "jhs", "shs", "sped", "k"}
+        return " ".join(
+            word.upper() if word.casefold() in acronyms else word.capitalize()
+            for word in text.split()
+        )
+
+    format_grade_label = _format_grade_label
 
     @staticmethod
     def _profile_completion_percent(student: Dict[str, Any]) -> int:
