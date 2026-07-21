@@ -10,7 +10,7 @@ from office_app.services.student_service import StudentService
 class StudentListService:
     """Business logic for student list filters, area counts, and grade options."""
 
-    ALL_GRADES = "All grades"
+    ALL_GRADES = "All years"
 
     def __init__(self, student_service: StudentService | None = None) -> None:
         self.student_service = student_service or StudentService()
@@ -29,7 +29,7 @@ class StudentListService:
                 for row in filtered
                 if self.student_service.status_style(row.get("status"))[0] == status
             ]
-        if self.student_service.normalize_grade(grade) != "all grades":
+        if grade != self.ALL_GRADES:
             normalized_grade = self.student_service.normalize_grade(grade)
             filtered = [
                 row for row in filtered

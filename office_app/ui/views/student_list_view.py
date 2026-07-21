@@ -78,7 +78,7 @@ class StudentListView(QWidget):
         search_row = QHBoxLayout()
         search_row.setSpacing(8)
         self.search_name = LineEdit()
-        self.search_name.setPlaceholderText("Search student name")
+        self.search_name.setPlaceholderText("Search student name or barangay")
         self.search_name.setAccessibleName("Search students by name")
         self.search_name.setClearButtonEnabled(True)
         self.search_name.setMinimumWidth(190)
@@ -141,8 +141,11 @@ class StudentListView(QWidget):
         sorted_label = QLabel("Sorted by last name")
         sorted_label.setObjectName("Caption")
         actions_row.addWidget(sorted_label)
+        # Clear and refresh are covered by the search affordance and shared
+        # page header. Import remains callable from Workbook without adding a
+        # second, visually noisy action cluster here.
         for button in (clear_btn, refresh_btn, self.import_btn):
-            actions_row.addWidget(button)
+            button.hide()
         clear_btn.clicked.connect(self.clear_student_filters)
         refresh_btn.clicked.connect(self.load_student_list)
         self.import_btn.clicked.connect(self.import_from_excel)

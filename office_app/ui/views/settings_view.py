@@ -6,7 +6,9 @@ from PyQt6.QtCore import QSettings, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QScrollArea,
     QVBoxLayout,
@@ -46,42 +48,86 @@ class SettingsView(QWidget):
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        scroll.setAccessibleName("Application settings")
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 2, 8, 20)
-        layout.setSpacing(12)
-        scroll.setWidget(content)
-        outer_layout.addWidget(scroll)
+        outer_layout.setSpacing(20)
 
-        intro = BodyLabel(
-            "Settings are saved on this computer and apply to every office operator."
+        top_grid = QGridLayout()
+        top_grid.setContentsMargins(0, 0, 0, 0)
+        top_grid.setHorizontalSpacing(20)
+        top_grid.setColumnStretch(0, 1)
+        top_grid.setColumnStretch(1, 1)
+
+        appearance_card = CardWidget()
+        appearance_card.setObjectName("SettingsCard")
+        appearance_card.setFixedHeight(290)
+        appearance_layout = QVBoxLayout(appearance_card)
+        appearance_layout.setContentsMargins(20, 18, 20, 18)
+        appearance_layout.setSpacing(13)
+        appearance_title = StrongBodyLabel("Appearance and accessibility")
+        appearance_title.setObjectName("CardHeading")
+        appearance_layout.addWidget(appearance_title)
+        appearance_description = CaptionLabel(
+            "Personalize this computer without changing shared student data."
         )
-        intro.setObjectName("Caption")
-        layout.addWidget(intro)
+        appearance_description.setWordWrap(True)
+        appearance_layout.addWidget(appearance_description)
+
+        self.theme_combo = ComboBox()
+        self.theme_combo.addItems(THEMES.keys())
+        self.theme_combo.hide()
+        self.dark_theme_checkbox = CheckBox("Dark theme")
+        self.dark_theme_checkbox.setAccessibleDescription(
+            "Uses a dark, high-contrast workspace on this computer."
+        )
+        self.dark_theme_checkbox.toggled.connect(
+            lambda enabled: self.theme_combo.setCurrentText("Dark" if enabled else "Light")
+        )
+        self.large_text_checkbox = CheckBox("Larger interface text")
+        self.large_text_checkbox.setAccessibleDescription(
+            "Increases key labels, controls, and dashboard values."
+        )
+        self.reduce_motion_checkbox = CheckBox("Reduce interface motion")
+        self.reduce_motion_checkbox.setAccessibleDescription(
+            "Disables page fades and decorative motion."
+        )
+        for checkbox in (
+            self.dark_theme_checkbox,
+            self.large_text_checkbox,
+            self.reduce_motion_checkbox,
+        ):
+            row = QFrame()
+            row.setObjectName("SettingsToggleRow")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(12, 8, 12, 8)
+            row_layout.addWidget(checkbox)
+            appearance_layout.addWidget(row)
+        appearance_layout.addStretch()
+        top_grid.addWidget(appearance_card, 0, 0)
 
         connection_card = CardWidget()
         connection_card.setObjectName("SettingsCard")
-        connection_layout = QHBoxLayout(connection_card)
-        connection_layout.setContentsMargins(16, 14, 16, 14)
-        connection_layout.setSpacing(18)
-        connection_copy = QVBoxLayout()
-        connection_copy.setSpacing(5)
-        connection_title = StrongBodyLabel("Office database")
-        connection_copy.addWidget(connection_title)
+        connection_card.setFixedHeight(290)
+        connection_layout = QVBoxLayout(connection_card)
+        connection_layout.setContentsMargins(20, 18, 20, 18)
+        connection_layout.setSpacing(12)
+        connection_title = StrongBodyLabel("Database connection")
+        connection_title.setObjectName("CardHeading")
+        connection_layout.addWidget(connection_title)
         connection_description = CaptionLabel(
-            "Manage the Supabase connection stored on this computer. "
-            "A restart is required after changing it."
+            "This installation uses the shared Supabase office database."
         )
         connection_description.setWordWrap(True)
-        connection_copy.addWidget(connection_description)
-        connection_layout.addLayout(connection_copy, 1)
+        connection_layout.addWidget(connection_description)
+        database_state = QFrame()
+        database_state.setObjectName("DatabaseStatePanel")
+        database_state_layout = QVBoxLayout(database_state)
+        database_state_layout.setContentsMargins(14, 12, 14, 12)
+        state_label = StrongBodyLabel("Connected workspace")
+        state_copy = CaptionLabel("Student records synchronize across authorized office PCs.")
+        state_copy.setWordWrap(True)
+        database_state_layout.addWidget(state_label)
+        database_state_layout.addWidget(state_copy)
+        connection_layout.addWidget(database_state)
+        connection_layout.addStretch()
         self.connection_button = PushButton("Edit connection")
         set_content_hugging_button(self.connection_button)
         self.connection_button.setAccessibleName("Edit Supabase connection")
@@ -90,18 +136,21 @@ class SettingsView(QWidget):
         )
         connection_layout.addWidget(
             self.connection_button,
-            alignment=Qt.AlignmentFlag.AlignVCenter,
+            alignment=Qt.AlignmentFlag.AlignRight,
         )
-        layout.addWidget(connection_card)
+        top_grid.addWidget(connection_card, 0, 1)
+        outer_layout.addLayout(top_grid)
 
         sync_card = CardWidget()
         sync_card.setObjectName("SyncSettingsCard")
+        sync_card.setFixedHeight(298)
         sync_layout = QVBoxLayout(sync_card)
-        sync_layout.setContentsMargins(16, 14, 16, 16)
-        sync_layout.setSpacing(9)
+        sync_layout.setContentsMargins(20, 18, 20, 18)
+        sync_layout.setSpacing(10)
 
         sync_header = QHBoxLayout()
         sync_title = StrongBodyLabel("Google Sheets synchronization")
+        sync_title.setObjectName("CardHeading")
         self.sync_token_badge = StatusBadge(
             "Not configured",
             state="warning",
@@ -114,12 +163,14 @@ class SettingsView(QWidget):
         sync_layout.addLayout(sync_header)
 
         sync_description = CaptionLabel(
-            "Store the private token used by the Sync now action. Windows "
-            "encrypts it for this user; it is never displayed again."
+            "Securely connect the office sheet and local master workbook. Saved tokens remain encrypted for this Windows user."
         )
         sync_description.setWordWrap(True)
         sync_layout.addWidget(sync_description)
 
+        token_label = QLabel("PRIVATE SYNC TOKEN")
+        token_label.setObjectName("UtilityLabel")
+        sync_layout.addWidget(token_label)
         token_row = QHBoxLayout()
         token_row.setSpacing(8)
         self.sync_token_input = LineEdit()
@@ -150,22 +201,12 @@ class SettingsView(QWidget):
         token_row.addWidget(self.show_sync_token_button)
         token_row.addWidget(self.clear_sync_token_button)
         sync_layout.addLayout(token_row)
-        layout.addWidget(sync_card)
-
-        workbook_card = CardWidget()
-        workbook_card.setObjectName("SettingsCard")
-        workbook_layout = QVBoxLayout(workbook_card)
-        workbook_layout.setContentsMargins(16, 14, 16, 16)
-        workbook_layout.setSpacing(10)
-        workbook_title = StrongBodyLabel("Master workbook")
-        workbook_layout.addWidget(workbook_title)
-        workbook_description = CaptionLabel(
-            "Choose the local workbook used by the Workbook screen."
-        )
-        workbook_layout.addWidget(workbook_description)
 
         workbook_row = QHBoxLayout()
         workbook_row.setSpacing(8)
+        workbook_label = QLabel("MASTER WORKBOOK")
+        workbook_label.setObjectName("UtilityLabel")
+        sync_layout.addWidget(workbook_label)
         self.workbook_path_input = LineEdit()
         self.workbook_path_input.setPlaceholderText(
             r"e.g., C:\Users\YourUser\Documents\SSM_Masterlist.xlsx"
@@ -175,57 +216,20 @@ class SettingsView(QWidget):
         self.pick_workbook_button.clicked.connect(self.pick_workbook)
         workbook_row.addWidget(self.workbook_path_input, 1)
         workbook_row.addWidget(self.pick_workbook_button)
-        workbook_layout.addLayout(workbook_row)
-        layout.addWidget(workbook_card)
-
-        appearance_card = CardWidget()
-        appearance_card.setObjectName("SettingsCard")
-        appearance_layout = QVBoxLayout(appearance_card)
-        appearance_layout.setContentsMargins(16, 14, 16, 16)
-        appearance_layout.setSpacing(10)
-        appearance_title = StrongBodyLabel("Appearance")
-        appearance_layout.addWidget(appearance_title)
-        appearance_description = CaptionLabel(
-            "Choose the color scheme that is most comfortable for your workspace."
-        )
-        appearance_layout.addWidget(appearance_description)
-
-        theme_row = QHBoxLayout()
-        theme_row.setSpacing(12)
-        theme_label = BodyLabel("Color scheme")
-        theme_label.setMinimumWidth(140)
-        self.theme_combo = ComboBox()
-        self.theme_combo.addItems(THEMES.keys())
-        self.theme_combo.setAccessibleName("Application color scheme")
-        self.theme_combo.setMaximumWidth(360)
-        theme_row.addWidget(theme_label)
-        theme_row.addWidget(self.theme_combo)
-        theme_row.addStretch(1)
-        appearance_layout.addLayout(theme_row)
-
-        self.large_text_checkbox = CheckBox("Use larger interface text")
-        self.large_text_checkbox.setAccessibleDescription(
-            "Increases key labels, controls, and dashboard values."
-        )
-        self.reduce_motion_checkbox = CheckBox(
-            "Reduce interface motion"
-        )
-        self.reduce_motion_checkbox.setAccessibleDescription(
-            "Disables page fade animations and continuous decorative motion."
-        )
-        appearance_layout.addWidget(self.large_text_checkbox)
-        appearance_layout.addWidget(self.reduce_motion_checkbox)
-        layout.addWidget(appearance_card)
+        sync_layout.addLayout(workbook_row)
 
         actions = QHBoxLayout()
+        saved_copy = CaptionLabel("Changes apply to this computer after saving.")
+        actions.addWidget(saved_copy)
         actions.addStretch()
         self.save_button = PrimaryPushButton("Save changes")
         set_content_hugging_button(self.save_button)
         self.save_button.setAccessibleName("Save application settings")
         self.save_button.clicked.connect(self.save_settings)
         actions.addWidget(self.save_button, alignment=Qt.AlignmentFlag.AlignRight)
-        layout.addLayout(actions)
-        layout.addStretch()
+        sync_layout.addLayout(actions)
+        outer_layout.addWidget(sync_card)
+        outer_layout.addStretch()
 
         self.load_settings()
         self._clear_token_requested = False
@@ -236,6 +240,7 @@ class SettingsView(QWidget):
 
         theme = self._settings.value("theme", "Light", type=str)
         self.theme_combo.setCurrentText(theme if theme in THEMES else "Light")
+        self.dark_theme_checkbox.setChecked(theme == "Dark")
         self.large_text_checkbox.setChecked(
             self._settings.value("large_text", False, type=bool)
         )

@@ -258,7 +258,7 @@ QFrame#ProfileAccent[status="graduated"] { background: @graduated; }
 *#ProfileAvatar {
     background: @graduated_soft;
     border: none;
-    border-radius: 28px;
+    border-radius: 36px;
     color: @graduated;
     font-size: 12px;
     font-weight: 700;
@@ -267,6 +267,11 @@ QWidget#ProfileInfoCard {
     background: @surface;
     border: 1px solid @border;
     border-radius: 11px;
+}
+QWidget#NextActionCallout {
+    background: @surface_subtle;
+    border: 1px solid @border_subtle;
+    border-radius: 8px;
 }
 *#ProfileFieldLabel { color: @text_secondary; font-size: 10px; font-weight: 500; }
 *#ProfileFieldValue { color: @text_primary; font-size: 12px; font-weight: 650; }
@@ -288,6 +293,22 @@ QProgressBar#ProfileLinearProgress {
 }
 QProgressBar#ProfileLinearProgress::chunk { border-radius: 4px; background: @graduated; }
 QWidget#Card[component="studentForm"] { background: @surface; }
+QFrame#FormAccent { background: @accent; border: none; border-radius: 2px; }
+QWidget#FormSection {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid @border_subtle;
+    padding-bottom: 2px;
+}
+*#FormSectionTitle { color: @text_primary; font-size: 13px; font-weight: 750; }
+*#FormHint {
+    padding: 6px 10px;
+    border-radius: 7px;
+    background: @accent_soft;
+    color: @warning;
+    font-size: 11px;
+    font-weight: 650;
+}
 QWidget#PhotoPanel { background: @surface_subtle; border: 1px solid @border_subtle; border-radius: 8px; }
 *#UtilityLabel { color: @text_secondary; }
 QWidget#FormField { background: transparent; }
@@ -380,6 +401,8 @@ QWidget#CoordinatorToolbar, QWidget#CoordinatorTableCard {
     border: 1px solid @border_subtle;
     border-radius: 8px;
 }
+QTableWidget#CoordTable { border: none; border-radius: 0; }
+QTableWidget#CoordTable::item { padding: 10px 12px; }
 QWidget#ExpenseContextBar {
     background: @surface_subtle;
     border: 1px solid @border;
@@ -387,6 +410,16 @@ QWidget#ExpenseContextBar {
 }
 *#ExpenseStudentName { color: @text_primary; font-size: 13px; font-weight: 700; }
 QWidget#SettingsSectionRow { background: transparent; border: none; }
+QWidget#SettingsToggleRow {
+    background: @surface_subtle;
+    border: 1px solid @border_subtle;
+    border-radius: 8px;
+}
+QWidget#DatabaseStatePanel {
+    background: @surface_subtle;
+    border: 1px solid @border_subtle;
+    border-radius: 8px;
+}
 QWidget#SyncPanel {
     background: transparent;
     border: none;
@@ -512,6 +545,20 @@ QProgressBar#BudgetProgress[state="neutral"]::chunk { background: @text_disabled
 *#WorkbookStateBadge { padding: 4px 8px; border: 1px solid @border; border-radius: 12px; background: @surface_subtle; color: @text_secondary; font-size: 12px; font-weight: 600; }
 *#WorkbookStateBadge[state="saved"] { background: @success_soft; border-color: @success; color: @success; }
 *#WorkbookStateBadge[state="dirty"] { background: @warning_soft; border-color: @warning; color: @warning; }
+*#WorkbookFileIcon {
+    border: 1px solid @success;
+    border-radius: 8px;
+    background: @success_soft;
+    color: @success;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 10px;
+    font-weight: 800;
+}
+QWidget#WorkbookSheetBar {
+    background: @surface;
+    border: 1px solid @border_subtle;
+    border-radius: 8px;
+}
 QFrame#ToolbarSeparator { color: @border; background: @border; min-width: 1px; max-width: 1px; }
 QComboBox#WorkbookSheetCombo { font-weight: 600; }
 QTabWidget::pane { border: 1px solid @border_subtle; border-radius: 8px; background: @surface; top: -1px; }

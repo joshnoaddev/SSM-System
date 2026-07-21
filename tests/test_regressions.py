@@ -487,7 +487,7 @@ class RegressionTests(unittest.TestCase):
         size = StudentCardDelegate().sizeHint(None, None)
 
         self.assertEqual(size.width(), 1)
-        self.assertEqual(StudentCardDelegate.CARD_HEIGHT, 86)
+        self.assertEqual(StudentCardDelegate.CARD_HEIGHT, 72)
         self.assertEqual(size.height(), StudentCardDelegate.CARD_HEIGHT)
 
     def test_dashboard_counts_status_variants(self):

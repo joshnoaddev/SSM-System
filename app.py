@@ -253,7 +253,9 @@ def trim_transparent_pixmap(pixmap, alpha_threshold=8):
 
 
 def set_logo_pixmap(label, width, height, fallback_text="\u271d"):
-    pix = QPixmap(resource_path(LOGO_ASSET))
+    # Use the compact Figma mark in navigation; the detailed crest is reserved
+    # for documents and the application icon.
+    pix = QPixmap(resource_path(os.path.join("assets", "ssm_startup_mark.png")))
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     label.setFixedSize(width, height)
     if pix.isNull():
@@ -1281,6 +1283,9 @@ class StudentApp(QMainWindow):
         self.status_bar = QStatusBar()
         self.status_bar.setSizeGripEnabled(False)
         self.setStatusBar(self.status_bar)
+        # The Figma desktop shell has no persistent footer. Existing services
+        # can still post transient messages without consuming workspace space.
+        self.status_bar.hide()
         self._last_database_update_at = None
         self.database_updated_label = QLabel("DB: waiting")
         self.database_updated_label.setObjectName("StatusMeta")
@@ -1305,7 +1310,8 @@ class StudentApp(QMainWindow):
         content_widget.setObjectName("MainContent")
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(28, 20, 28, 18)
-        content_layout.setSpacing(14)
+        # This places every page body on the 96px Figma baseline.
+        content_layout.setSpacing(28)
 
         # Workspace header: page context on the left, live office state on the right.
         header = QFrame()
@@ -1347,9 +1353,16 @@ class StudentApp(QMainWindow):
         self.connection_badge.setFixedHeight(30)
         self.connection_badge.setToolTip("Live Supabase connection status")
         self.connection_badge.hide()
+        self.header_secondary_button = ActionButton("Refresh data", variant="secondary")
+        self.header_secondary_button.setObjectName("HeaderSecondaryAction")
+        self.header_secondary_button.clicked.connect(self._header_secondary_action_clicked)
         self.header_add_button = ActionButton("Refresh data", variant="secondary")
         self.header_add_button.setObjectName("HeaderPrimaryAction")
         self.header_add_button.clicked.connect(self._header_action_clicked)
+        header_actions.addWidget(
+            self.header_secondary_button,
+            alignment=Qt.AlignmentFlag.AlignVCenter,
+        )
         header_actions.addWidget(
             self.header_add_button,
             alignment=Qt.AlignmentFlag.AlignVCenter,
@@ -1490,7 +1503,7 @@ class StudentApp(QMainWindow):
         form_header = (
             ("Edit student", "Update identity, support, and office record details")
             if self._editing_id
-            else ("Add student", "Create a complete student record")
+            else ("New student", "Create a complete student record for the shared office workspace")
         )
         pages = {
             0: ("Dashboard", "A clear view of student support, budgets, and recent activity."),
@@ -1505,13 +1518,32 @@ class StudentApp(QMainWindow):
         title, subtitle = pages.get(index, ("SSM Workspace", "Student support records"))
         self.page_title_label.setText(title)
         self.page_subtitle_label.setText(subtitle)
-        self.header_add_button.setVisible(index != 3)
-        self.header_add_button.setText(
-            "Back to profile" if index == 4 else "Refresh data"
-        )
-        self.header_add_button.setProperty("variant", "secondary")
-        self.header_add_button.style().unpolish(self.header_add_button)
-        self.header_add_button.style().polish(self.header_add_button)
+        action_map = {
+            0: (("Refresh data", "secondary"), None),
+            1: (("Refresh data", "secondary"), None),
+            2: (("Back to students", "secondary"), ("Edit record", "primary")),
+            3: (("Cancel", "secondary"), ("Save changes" if self._editing_id else "Save student", "primary")),
+            4: (("Back to profile", "secondary"), None),
+            5: (None, ("Open in Excel", "primary")),
+            6: (None, ("New coordinator", "primary")),
+            7: (None, None),
+        }
+        secondary, primary = action_map.get(index, (None, None))
+        self._configure_header_button(self.header_secondary_button, secondary)
+        self._configure_header_button(self.header_add_button, primary)
+
+    @staticmethod
+    def _configure_header_button(button, spec) -> None:
+        button.setVisible(bool(spec))
+        if not spec:
+            return
+        text, variant = spec
+        button.setText(text)
+        button.setEnabled(True)
+        button.setProperty("variant", variant)
+        button.style().unpolish(button)
+        button.style().polish(button)
+        set_content_hugging_button(button, height=38)
 
     def _nav_button_for_page(self, index: int):
         """Return the navigation owner for a workspace page.
@@ -1532,13 +1564,26 @@ class StudentApp(QMainWindow):
         }.get(index)
 
     def _header_action_clicked(self):
-        if self.stacked_widget.currentIndex() == 4:
-            if self.current_student_id:
-                self._switch_page(2)
-            else:
-                self.nav_students()
-            return
-        self._sidebar_refresh()
+        index = self.stacked_widget.currentIndex()
+        if index == 2:
+            self.open_edit_screen()
+        elif index == 3:
+            self.save_student_form()
+        elif index == 5:
+            self.open_workbook_in_excel()
+        elif index == 6:
+            self._add_coordinator_dialog()
+        else:
+            self._sidebar_refresh()
+
+    def _header_secondary_action_clicked(self):
+        index = self.stacked_widget.currentIndex()
+        if index in (2, 3):
+            self.nav_students()
+        elif index == 4:
+            self._switch_page(2) if self.current_student_id else self.nav_students()
+        else:
+            self._sidebar_refresh()
 
     def resizeEvent(self, event) -> None:
         """Keep the workspace header usable at the supported minimum width."""
@@ -1552,12 +1597,7 @@ class StudentApp(QMainWindow):
             return
         compact = self.width() < 1120
         self.page_subtitle_label.setVisible(not compact)
-        self.header_add_button.setText(
-            "Back to profile"
-            if self.stacked_widget.currentIndex() == 4
-            else "Refresh data"
-        )
-        set_content_hugging_button(self.header_add_button)
+        self._update_page_header(self.stacked_widget.currentIndex())
         if hasattr(self, "sync_panel"):
             self.sync_panel.setFixedHeight(126 if compact else 96)
         self.page_eyebrow_label.hide()
@@ -2307,6 +2347,7 @@ class StudentApp(QMainWindow):
         self.dashboard_state_label.setObjectName("DashboardState")
         self.dashboard_state_label.setFixedHeight(26)
         self.dashboard_state_label.setAccessibleName("Dashboard refresh status")
+        self.dashboard_state_label.hide()
         overview_row.addWidget(overview_lbl)
         overview_row.addStretch()
         overview_row.addWidget(self.dashboard_state_label)
@@ -2331,8 +2372,8 @@ class StudentApp(QMainWindow):
                 "Currently supported",
             ),
             self._build_card(
-                "GRADUATED", self.lbl_graduated_val, "graduated",
-                "Completed the program",
+                "GRADUATING", self.lbl_graduated_val, "graduated",
+                "Completing the program",
             ),
             self._build_card(
                 "BUDGET USED", self.dashboard_budget_value, "warning",
@@ -2491,6 +2532,7 @@ class StudentApp(QMainWindow):
 
         sync_panel = self._build_sync_panel()
         sync_panel.setFixedHeight(84)
+        sync_panel.hide()
         layout.addWidget(sync_panel)
         self.stacked_widget.addWidget(page)
 
@@ -3484,21 +3526,20 @@ class StudentApp(QMainWindow):
         widget = QWidget()
         outer = QVBoxLayout(widget)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(12)
+        outer.setSpacing(20)
 
-        top_bar = QHBoxLayout()
-        back_btn = ActionButton("Back to students", variant="secondary")
-        back_btn.clicked.connect(self.nav_students)
-        self.edit_btn = ActionButton("Edit record")
+        # Compatibility actions stay available to the profile loader and
+        # shortcuts; visible navigation lives in the shared Figma header.
+        self.edit_btn = ActionButton("Edit record", widget)
         self.edit_btn.clicked.connect(self.open_edit_screen)
+        self.edit_btn.hide()
         self.deactivate_btn = ActionButton("Mark inactive", widget, variant="tertiary")
         self.deactivate_btn.clicked.connect(self.toggle_active_status)
         self.deactivate_btn.hide()
         self.remove_student_btn = ActionButton("Remove", widget, variant="danger")
         self.remove_student_btn.clicked.connect(self.remove_current_student)
         self.remove_student_btn.hide()
-        more_actions = ActionButton("More actions", variant="secondary")
-        profile_menu = QMenu(more_actions)
+        profile_menu = QMenu(widget)
         self.profile_change_photo_action = profile_menu.addAction("Change photo")
         self.profile_change_photo_action.triggered.connect(self.change_photo)
         self.profile_remove_photo_action = profile_menu.addAction("Remove photo")
@@ -3509,40 +3550,22 @@ class StudentApp(QMainWindow):
         self.profile_status_action.triggered.connect(self.toggle_active_status)
         self.profile_remove_action = profile_menu.addAction("Remove student")
         self.profile_remove_action.triggered.connect(self.remove_current_student)
-        more_actions.setMenu(profile_menu)
-        for button in (back_btn, more_actions, self.edit_btn, self.deactivate_btn, self.remove_student_btn):
-            set_content_hugging_button(button, height=38)
-        top_bar.addWidget(back_btn)
-        top_bar.addStretch()
-        top_bar.addWidget(more_actions)
-        top_bar.addWidget(self.edit_btn)
-        outer.addLayout(top_bar)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 6, 12)
-        content_layout.setSpacing(14)
 
         summary = QFrame()
         summary.setObjectName("ProfileSummary")
-        summary.setFixedHeight(96)
+        summary.setFixedHeight(126)
         summary_layout = QHBoxLayout(summary)
-        summary_layout.setContentsMargins(0, 14, 18, 14)
-        summary_layout.setSpacing(16)
+        summary_layout.setContentsMargins(0, 18, 22, 18)
+        summary_layout.setSpacing(18)
         accent = QFrame()
         accent.setObjectName("ProfileAccent")
         accent.setFixedWidth(4)
-        self.profile_summary_accent = accent
         self.profile_summary_accent = accent
         summary_layout.addWidget(accent)
 
         self.photo_label = QLabel("Photo")
         self.photo_label.setObjectName("ProfileAvatar")
-        self.photo_label.setFixedSize(56, 56)
+        self.photo_label.setFixedSize(72, 72)
         self.photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         summary_layout.addWidget(self.photo_label)
 
@@ -3559,7 +3582,7 @@ class StudentApp(QMainWindow):
         identity.addWidget(self.lbl_profile_name)
         identity.addWidget(self.profile_meta_label)
         identity.addWidget(self.lbl_profile_status)
-        summary_layout.addLayout(identity, 1)
+        summary_layout.addLayout(identity, 2)
 
         profile_metric = QVBoxLayout()
         profile_metric.setSpacing(5)
@@ -3571,7 +3594,7 @@ class StudentApp(QMainWindow):
         self.profile_progress.setRange(0, 100)
         self.profile_progress.setValue(0)
         self.profile_progress.setTextVisible(False)
-        self.profile_progress.setFixedSize(136, 7)
+        self.profile_progress.setFixedSize(154, 7)
         profile_metric.addWidget(profile_label)
         profile_metric.addWidget(self.profile_completion_label)
         profile_metric.addWidget(self.profile_progress)
@@ -3588,12 +3611,12 @@ class StudentApp(QMainWindow):
         self.profile_budget_bar.setRange(0, 100)
         self.profile_budget_bar.setValue(0)
         self.profile_budget_bar.setTextVisible(False)
-        self.profile_budget_bar.setFixedSize(184, 7)
+        self.profile_budget_bar.setFixedSize(196, 7)
         budget_metric.addWidget(budget_label)
         budget_metric.addWidget(self.profile_budget_label)
         budget_metric.addWidget(self.profile_budget_bar)
         summary_layout.addLayout(budget_metric)
-        content_layout.addWidget(summary)
+        outer.addWidget(summary)
 
         self.profile_data_labels = {}
 
@@ -3601,15 +3624,15 @@ class StudentApp(QMainWindow):
             card = Card()
             card.setObjectName("ProfileInfoCard")
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(14, 12, 14, 12)
-            card_layout.setSpacing(7)
+            card_layout.setContentsMargins(18, 16, 18, 16)
+            card_layout.setSpacing(9)
             title = StrongBodyLabel(title_text)
             title.setObjectName("CardHeading")
             card_layout.addWidget(title)
             grid = QGridLayout()
-            grid.setHorizontalSpacing(14)
-            grid.setVerticalSpacing(7)
-            grid.setColumnMinimumWidth(0, 104)
+            grid.setHorizontalSpacing(18)
+            grid.setVerticalSpacing(9)
+            grid.setColumnMinimumWidth(0, 112)
             grid.setColumnStretch(1, 1)
             for row, (label_text, key) in enumerate(fields):
                 label = QLabel(label_text)
@@ -3627,7 +3650,7 @@ class StudentApp(QMainWindow):
 
         cards = QGridLayout()
         cards.setHorizontalSpacing(14)
-        cards.setVerticalSpacing(14)
+        cards.setVerticalSpacing(20)
         student_card = info_card("Student details", (
             ("Gender", "gender"), ("Grade / year", "grade"),
             ("Birthday", "birthday"), ("School", "school"),
@@ -3645,24 +3668,40 @@ class StudentApp(QMainWindow):
         notes_card = Card()
         notes_card.setObjectName("ProfileInfoCard")
         notes_layout = QVBoxLayout(notes_card)
-        notes_layout.setContentsMargins(14, 12, 14, 12)
-        notes_layout.setSpacing(7)
+        notes_layout.setContentsMargins(18, 16, 18, 16)
+        notes_layout.setSpacing(10)
         notes_title = StrongBodyLabel("Office notes")
         notes_title.setObjectName("CardHeading")
         notes_layout.addWidget(notes_title)
         self.remarks_edit = QTextEdit()
         self.remarks_edit.setObjectName("RemarksEditor")
         self.remarks_edit.setPlaceholderText("Add a concise office note")
-        self.remarks_edit.setFixedHeight(70)
         self.remarks_edit.textChanged.connect(self._update_remarks_dirty_state)
         self._loaded_remarks = ""
-        notes_layout.addWidget(self.remarks_edit)
-        action_row = QHBoxLayout()
+        self.remarks_edit.hide()
+        self.remarks_display = QLabel("No office notes recorded.")
+        self.remarks_display.setObjectName("RemarksText")
+        self.remarks_display.setWordWrap(True)
+        self.remarks_display.setAlignment(Qt.AlignmentFlag.AlignTop)
+        notes_layout.addWidget(self.remarks_display, 1)
+        next_action = QFrame()
+        next_action.setObjectName("NextActionCallout")
+        next_layout = QVBoxLayout(next_action)
+        next_layout.setContentsMargins(12, 8, 12, 8)
+        next_layout.setSpacing(2)
+        next_title = QLabel("NEXT ACTION")
+        next_title.setObjectName("UtilityLabel")
+        next_copy = StrongBodyLabel("Review during the next office follow-up")
+        next_layout.addWidget(next_title)
+        next_layout.addWidget(next_copy)
+        notes_layout.addWidget(next_action)
         self.save_remarks_btn = ActionButton("Save notes")
         self.save_remarks_btn.clicked.connect(self.save_remarks)
         self.save_remarks_btn.setEnabled(False)
+        self.save_remarks_btn.hide()
         expense_btn = ActionButton("Expenses", variant="secondary")
         expense_btn.clicked.connect(self.nav_expenses)
+        expense_btn.hide()
         self.change_photo_btn = ActionButton("Change photo", widget, variant="tertiary")
         self.change_photo_btn.clicked.connect(self.change_photo)
         self.change_photo_btn.hide()
@@ -3674,93 +3713,46 @@ class StudentApp(QMainWindow):
             self.remove_photo_btn, self.deactivate_btn, self.remove_student_btn,
         ):
             set_content_hugging_button(button, height=34)
-        action_row.addWidget(self.save_remarks_btn)
-        action_row.addWidget(expense_btn)
-        action_row.addStretch()
-        notes_layout.addLayout(action_row)
-
-        for card in (student_card, support_card, contact_card, notes_card):
-            card.setMinimumHeight(164)
+        student_card.setFixedHeight(222)
+        support_card.setFixedHeight(222)
+        contact_card.setFixedHeight(220)
+        notes_card.setFixedHeight(220)
         cards.addWidget(student_card, 0, 0)
         cards.addWidget(support_card, 0, 1)
         cards.addWidget(contact_card, 1, 0)
         cards.addWidget(notes_card, 1, 1)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
-        content_layout.addLayout(cards)
-        content_layout.addStretch()
-
-        scroll.setWidget(content)
-        outer.addWidget(scroll)
+        outer.addLayout(cards)
+        outer.addStretch()
         self.stacked_widget.addWidget(widget)
 
     def create_add_screen(self):
         widget = QWidget()
         outer = QVBoxLayout(widget)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(14)
+        outer.setSpacing(0)
 
-        top_bar = QHBoxLayout()
-        cancel_btn = QPushButton("Back")
-        cancel_btn.setObjectName("SecondaryBtn")
-        set_content_hugging_button(cancel_btn)
-        cancel_btn.clicked.connect(self.nav_students)
-        self.form_title_label = TitleLabel("New student record")
-        self.form_title_label.setObjectName("FormModeTitle")
-        top_bar.addWidget(cancel_btn)
-        top_bar.addWidget(self.form_title_label)
-        top_bar.addStretch()
-        outer.addLayout(top_bar)
+        self.form_title_label = QLabel("New student record", widget)
+        self.form_title_label.hide()
+        self.add_photo_label = QLabel("No photo", widget)
+        self.add_photo_label.hide()
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = Card()
         content.setProperty("component", "studentForm")
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(20, 18, 20, 22)
-        layout.setSpacing(14)
-
-        heading = StrongBodyLabel("Identity and support details")
-        heading.setObjectName("CardHeading")
-        heading_copy = QLabel(
-            "Keep the master record complete so sponsors and coordinators "
-            "see the same information."
-        )
-        heading_copy.setObjectName("Caption")
-        heading_copy.setWordWrap(True)
-        layout.addWidget(heading)
-        layout.addWidget(heading_copy)
-
-        form_body = QHBoxLayout()
-        form_body.setSpacing(24)
-        form_body.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        photo_panel = QWidget()
-        photo_panel.setObjectName("PhotoPanel")
-        photo_panel.setFixedWidth(156)
-        photo_panel_layout = QVBoxLayout(photo_panel)
-        photo_panel_layout.setContentsMargins(12, 12, 12, 14)
-        photo_panel_layout.setSpacing(10)
-        photo_panel_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        photo_caption = QLabel("PROFILE PHOTO")
-        photo_caption.setObjectName("UtilityLabel")
-        self.add_photo_label = QLabel("No photo")
-        self.add_photo_label.setFixedSize(120, 132)
-        self.add_photo_label.setObjectName("PhotoFrame")
-        self.add_photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pick_btn = QPushButton("Choose photo")
-        pick_btn.setObjectName("SecondaryBtn")
-        pick_btn.clicked.connect(self.pick_add_photo)
-        set_content_hugging_button(pick_btn)
-        photo_panel_layout.addWidget(photo_caption)
-        photo_panel_layout.addWidget(self.add_photo_label)
-        photo_panel_layout.addWidget(
-            pick_btn,
-            alignment=Qt.AlignmentFlag.AlignHCenter,
-        )
-        form_body.addWidget(photo_panel)
+        content.setFixedHeight(608)
+        shell = QHBoxLayout(content)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        accent = QFrame()
+        accent.setObjectName("FormAccent")
+        accent.setFixedWidth(4)
+        shell.addWidget(accent)
+        form = QWidget()
+        layout = QVBoxLayout(form)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+        shell.addWidget(form, 1)
 
         self.inp_last    = QLineEdit()
         self.inp_first   = QLineEdit()
@@ -3778,7 +3770,7 @@ class StudentApp(QMainWindow):
         self.inp_school  = QLineEdit()
         self.inp_parents = QLineEdit()
         self.inp_course  = QLineEdit()
-        self.inp_remarks = QTextEdit(); self.inp_remarks.setMinimumHeight(92)
+        self.inp_remarks = QTextEdit(); self.inp_remarks.setFixedHeight(54)
         self.inp_status  = QComboBox(); self.inp_status.addItems(["Active", "Inactive/Removed", "Graduated"])
 
         self.inp_last.setPlaceholderText("Family name")
@@ -3795,18 +3787,12 @@ class StudentApp(QMainWindow):
             "Important context for the office team"
         )
 
-        fields_grid = QGridLayout()
-        fields_grid.setHorizontalSpacing(14)
-        fields_grid.setVerticalSpacing(10)
-        fields_grid.setColumnStretch(0, 1)
-        fields_grid.setColumnStretch(1, 1)
-
         def field_block(label_text, field, *, required=False):
             block = QWidget()
             block.setObjectName("FormField")
             block_layout = QVBoxLayout(block)
             block_layout.setContentsMargins(0, 0, 0, 0)
-            block_layout.setSpacing(5)
+            block_layout.setSpacing(4)
             label = QLabel(label_text + ("  *" if required else ""))
             label.setObjectName("FieldLabel")
             block_layout.addWidget(label)
@@ -3815,60 +3801,67 @@ class StudentApp(QMainWindow):
                 field.setAccessibleName(label_text)
             return block
 
-        field_rows = (
-            (0, 0, "Last name", self.inp_last, True, 1),
-            (0, 1, "First name", self.inp_first, True, 1),
-            (1, 0, "Gender", self.inp_gender, False, 1),
-            (1, 1, "Birthday", self.inp_bday, False, 1),
-            (2, 0, "Grade / level", self.inp_grade, False, 1),
-            (2, 1, "Record status", self.inp_status, False, 1),
-            (3, 0, "Area / coordinator", self.inp_area, False, 1),
-            (3, 1, "City", self.inp_city, False, 1),
-            (4, 0, "Sponsor", self.inp_sponsor, False, 1),
-            (4, 1, "Contact number", self.inp_contact, False, 1),
-            (5, 0, "School", self.inp_school, False, 1),
-            (5, 1, "Course", self.inp_course, False, 1),
-            (6, 0, "Address", self.inp_address, False, 2),
-            (
-                7,
-                0,
-                "Parents and occupations",
-                self.inp_parents,
-                False,
-                2,
-            ),
-            (8, 0, "Office remarks", self.inp_remarks, False, 2),
-        )
-        for row, column, label, field, required, span in field_rows:
-            fields_grid.addWidget(
-                field_block(label, field, required=required),
-                row,
-                column,
-                1,
-                span,
-            )
+        def section(title_text, fields, columns=4, height=86):
+            section_widget = QWidget()
+            section_widget.setObjectName("FormSection")
+            section_widget.setFixedHeight(height)
+            section_layout = QVBoxLayout(section_widget)
+            section_layout.setContentsMargins(0, 0, 0, 0)
+            section_layout.setSpacing(7)
+            title = StrongBodyLabel(title_text)
+            title.setObjectName("FormSectionTitle")
+            section_layout.addWidget(title)
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(12)
+            grid.setVerticalSpacing(7)
+            for column in range(columns):
+                grid.setColumnStretch(column, 1)
+            for row, column, span, label, field, required in fields:
+                grid.addWidget(
+                    field_block(label, field, required=required),
+                    row, column, 1, span,
+                )
+            section_layout.addLayout(grid)
+            return section_widget
 
-        form_body.addLayout(fields_grid, 1)
-        layout.addLayout(form_body)
+        layout.addWidget(section("Student identity", (
+            (0, 0, 1, "Last name", self.inp_last, True),
+            (0, 1, 1, "First name", self.inp_first, True),
+            (0, 2, 1, "Gender", self.inp_gender, False),
+            (0, 3, 1, "Birthday", self.inp_bday, False),
+        )))
+        layout.addWidget(section("Education", (
+            (0, 0, 1, "Grade / year", self.inp_grade, False),
+            (0, 1, 1, "School", self.inp_school, False),
+            (0, 2, 1, "Course / track", self.inp_course, False),
+            (0, 3, 1, "Record status", self.inp_status, False),
+        )))
+        layout.addWidget(section("Support and location", (
+            (0, 0, 1, "Area / coordinator", self.inp_area, False),
+            (0, 1, 1, "Sponsor", self.inp_sponsor, False),
+            (0, 2, 1, "City", self.inp_city, False),
+            (0, 3, 1, "Address", self.inp_address, False),
+        )))
+        layout.addWidget(section("Contact and notes", (
+            (0, 0, 1, "Contact number", self.inp_contact, False),
+            (0, 1, 1, "Parent / guardian", self.inp_parents, False),
+            (0, 2, 2, "Office remarks", self.inp_remarks, False),
+        ), height=116))
 
         footer = QHBoxLayout()
-        required_copy = QLabel("* Required fields")
-        required_copy.setObjectName("Caption")
-        footer.addWidget(required_copy)
+        photo_note = QLabel("Photo can be added after saving")
+        photo_note.setObjectName("FormHint")
+        layout.addStretch()
         footer.addStretch()
+        footer.addWidget(photo_note)
 
         self.save_form_btn = PrimaryPushButton("Save student")
         self.save_form_btn.clicked.connect(self.save_student_form)
-        set_content_hugging_button(
-            self.save_form_btn,
-            min_width=104,
-            height=44,
-        )
-        footer.addWidget(self.save_form_btn)
+        self.save_form_btn.hide()
         layout.addLayout(footer)
 
-        scroll.setWidget(content)
-        outer.addWidget(scroll)
+        outer.addWidget(content)
+        outer.addStretch()
         self.stacked_widget.addWidget(widget)
 
     # ── SCREEN 4: EXPENSES ────────────────────────────────────────────────────
@@ -3880,7 +3873,7 @@ class StudentApp(QMainWindow):
         inner = QWidget()
         inner.setObjectName("MainContent")
         layout = QVBoxLayout(inner)
-        layout.setSpacing(16)
+        layout.setSpacing(20)
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.expenses_title = StrongBodyLabel("Loading student…")
@@ -3974,6 +3967,7 @@ class StudentApp(QMainWindow):
 
         # Add expense card
         add_card = Card()
+        add_card.setFixedHeight(118)
         add_layout = QVBoxLayout(add_card)
         add_layout.setContentsMargins(16, 16, 16, 16)
         add_layout.setSpacing(8)
@@ -4011,23 +4005,25 @@ class StudentApp(QMainWindow):
         date_label.setObjectName("FieldLabel")
         entry_year_label = QLabel("School year")
         entry_year_label.setObjectName("FieldLabel")
-        add_grid.addWidget(description_label, 0, 0, 1, 2)
-        add_grid.addWidget(amount_label, 0, 2)
-        add_grid.addWidget(self.exp_desc, 1, 0, 1, 2)
-        add_grid.addWidget(self.exp_amount, 1, 2)
-        add_grid.addWidget(date_label, 2, 0)
-        add_grid.addWidget(entry_year_label, 2, 1)
-        add_grid.addWidget(self.exp_date, 3, 0)
-        add_grid.addWidget(self.exp_sy_entry, 3, 1)
-        add_grid.addWidget(self.add_expense_btn, 3, 2)
-        add_grid.setColumnStretch(0, 2)
+        add_grid.addWidget(description_label, 0, 0)
+        add_grid.addWidget(amount_label, 0, 1)
+        add_grid.addWidget(date_label, 0, 2)
+        add_grid.addWidget(entry_year_label, 0, 3)
+        add_grid.addWidget(self.exp_desc, 1, 0)
+        add_grid.addWidget(self.exp_amount, 1, 1)
+        add_grid.addWidget(self.exp_date, 1, 2)
+        add_grid.addWidget(self.exp_sy_entry, 1, 3)
+        add_grid.addWidget(self.add_expense_btn, 1, 4)
+        add_grid.setColumnStretch(0, 3)
         add_grid.setColumnStretch(1, 1)
         add_grid.setColumnStretch(2, 1)
+        add_grid.setColumnStretch(3, 1)
         add_layout.addLayout(add_grid)
         layout.addWidget(add_card)
 
         # Expenses table
         table_card = Card()
+        table_card.setFixedHeight(252)
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(16, 16, 16, 16)
         table_layout.setSpacing(8)
@@ -4052,7 +4048,7 @@ class StudentApp(QMainWindow):
         self.expenses_table.setShowGrid(False)
         self.expenses_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.expenses_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.expenses_table.setMinimumHeight(210)
+        self.expenses_table.setMinimumHeight(176)
         self.expenses_table.verticalHeader().setMinimumSectionSize(40)
         self.expenses_table.verticalHeader().setDefaultSectionSize(40)
         self.expenses_empty_state = EmptyState(
@@ -4061,7 +4057,7 @@ class StudentApp(QMainWindow):
         )
         self.expenses_empty_state.setAccessibleName("No expenses recorded")
         self.expense_history_stack = QStackedWidget()
-        self.expense_history_stack.setMinimumHeight(210)
+        self.expense_history_stack.setMinimumHeight(176)
         self.expense_history_stack.addWidget(self.expenses_table)
         self.expense_history_stack.addWidget(self.expenses_empty_state)
         self.expense_history_stack.setCurrentWidget(self.expenses_empty_state)
@@ -4079,64 +4075,57 @@ class StudentApp(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        layout.setSpacing(20)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         controls_card = CardWidget()
         controls_card.setObjectName("CoordinatorToolbar")
+        controls_card.setFixedHeight(62)
         controls_card.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Maximum,
         )
-        controls_layout = QVBoxLayout(controls_card)
+        controls_layout = QHBoxLayout(controls_card)
         controls_layout.setContentsMargins(12, 12, 12, 12)
-        controls_layout.setSpacing(8)
+        controls_layout.setSpacing(10)
 
-        top_bar = QHBoxLayout()
-        top_bar.setSpacing(8)
-        title = StrongBodyLabel("Directory")
-        title.setObjectName("CardHeading")
         self.coord_status = QLabel("0 records")
         self.coord_status.setObjectName("Caption")
         self.coord_search = QLineEdit()
-        self.coord_search.setPlaceholderText("Search by name, location, email...")
+        self.coord_search.setPlaceholderText("Search coordinator name, area, or contact")
         self.coord_search.setAccessibleName("Search coordinators")
         self.coord_search.setClearButtonEnabled(True)
-        self.coord_search.setMinimumWidth(280)
+        self.coord_search.setFixedWidth(430)
+        self.coord_search.setFixedHeight(38)
         self.coord_search.textChanged.connect(self._filter_coordinators)
         self.add_coordinator_btn = PrimaryPushButton("Add coordinator")
         set_content_hugging_button(self.add_coordinator_btn)
         self.add_coordinator_btn.clicked.connect(self._add_coordinator_dialog)
+        self.add_coordinator_btn.hide()
         self.refresh_coordinator_btn = QPushButton("Refresh")
         self.refresh_coordinator_btn.setObjectName("SecondaryBtn")
         set_content_hugging_button(self.refresh_coordinator_btn)
         self.refresh_coordinator_btn.clicked.connect(self.load_coordinators)
-        top_bar.addWidget(title)
-        top_bar.addWidget(self.coord_status)
-        top_bar.addStretch()
-        top_bar.addWidget(self.add_coordinator_btn)
-        top_bar.addWidget(self.refresh_coordinator_btn)
-        controls_layout.addLayout(top_bar)
-
-        search_row = QHBoxLayout()
-        search_row.addWidget(self.coord_search, 1)
-        controls_layout.addLayout(search_row)
+        controls_layout.addWidget(self.coord_search)
+        controls_layout.addWidget(self.coord_status)
+        controls_layout.addStretch()
+        controls_layout.addWidget(self.refresh_coordinator_btn)
         layout.addWidget(controls_card)
 
         self.coord_table_card = CardWidget()
         self.coord_table_card.setObjectName("CoordinatorTableCard")
-        self.coord_table_card.setMaximumHeight(360)
+        self.coord_table_card.setFixedHeight(554)
         self.coord_table_card.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Maximum,
         )
         table_layout = QVBoxLayout(self.coord_table_card)
-        table_layout.setContentsMargins(14, 14, 14, 14)
-        table_layout.setSpacing(8)
+        table_layout.setContentsMargins(12, 12, 12, 12)
+        table_layout.setSpacing(0)
         self.coord_table = QTableWidget()
         self.coord_table.setObjectName("CoordTable")
         self.coord_table.setColumnCount(6)
-        self.coord_table.setHorizontalHeaderLabels(["Location", "Contact person", "Email", "Contact no.", "Facebook page", "Remarks"])
+        self.coord_table.setHorizontalHeaderLabels(["NAME", "AREA", "CONTACT", "ASSIGNED", "UPDATED", "ACTIONS"])
         self.coord_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
@@ -4150,7 +4139,8 @@ class StudentApp(QMainWindow):
         self.coord_table.setShowGrid(False)
         self.coord_table.verticalHeader().setVisible(False)
         self.coord_table.setWordWrap(True)
-        self.coord_table.verticalHeader().setDefaultSectionSize(48)
+        self.coord_table.verticalHeader().setMinimumSectionSize(72)
+        self.coord_table.verticalHeader().setDefaultSectionSize(72)
         self.coord_table.doubleClicked.connect(self._edit_coordinator_dialog)
         empty_action = ActionButton("Add coordinator")
         empty_action.clicked.connect(self._run_coord_empty_action)
@@ -4229,21 +4219,7 @@ class StudentApp(QMainWindow):
         self.refresh_coordinator_btn.setText("Refresh")
 
     def _set_coordinator_results_expanded(self, has_rows):
-        if has_rows:
-            content_height = self.coord_table.horizontalHeader().sizeHint().height() + 30
-            content_height += sum(
-                self.coord_table.rowHeight(row)
-                for row in range(self.coord_table.rowCount())
-            )
-            target_height = max(160, min(content_height, 520))
-        else:
-            target_height = 360
-        self.coord_table_card.setMaximumHeight(target_height)
-        self.coord_table_card.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Maximum,
-        )
-        self.coord_table_card.updateGeometry()
+        self.coord_table_card.setFixedHeight(554)
 
     def _populate_coord_table(self, rows):
         self.coord_empty_action.setVisible(True)
@@ -4251,13 +4227,31 @@ class StudentApp(QMainWindow):
         for r in rows:
             row_idx = self.coord_table.rowCount()
             self.coord_table.insertRow(row_idx)
-            for col, key in enumerate(["location", "contact_person", "email", "contact_no", "fb_page", "remarks"]):
-                val = r.get(key) or ""
+            contact = "  /  ".join(
+                value for value in (r.get("email"), r.get("contact_no")) if value
+            ) or "—"
+            updated = str(r.get("updated_at") or r.get("created_at") or "—")[:10]
+            values = (
+                r.get("contact_person") or "Unnamed coordinator",
+                r.get("location") or "Area not set",
+                contact,
+                r.get("assigned") or r.get("fb_page") or "—",
+                updated,
+            )
+            for col, val in enumerate(values):
                 item = QTableWidgetItem(val)
                 item.setToolTip(val)
                 item.setData(Qt.ItemDataRole.UserRole, r.get("id"))
                 self.coord_table.setItem(row_idx, col, item)
-        self.coord_table.resizeRowsToContents()
+            edit_button = ActionButton("Edit", variant="tertiary")
+            set_content_hugging_button(edit_button, height=32)
+            edit_button.clicked.connect(
+                lambda _checked=False, row=row_idx: self._edit_coordinator_dialog(
+                    self.coord_table.model().index(row, 0)
+                )
+            )
+            self.coord_table.setCellWidget(row_idx, 5, edit_button)
+            self.coord_table.setRowHeight(row_idx, 72)
         count = len(rows)
         self.coord_status.setText(f"{count} {'record' if count == 1 else 'records'}")
         if rows:
@@ -4303,14 +4297,14 @@ class StudentApp(QMainWindow):
         self._populate_coord_table(filtered)
 
     def _coord_row_data(self, row_idx):
-        keys = ["location", "contact_person", "email", "contact_no", "fb_page", "remarks"]
-        d = {}
-        for col, key in enumerate(keys):
-            item = self.coord_table.item(row_idx, col)
-            d[key] = item.text() if item else ""
-            if col == 0:
-                d["_id"] = item.data(Qt.ItemDataRole.UserRole) if item else None
-        return d
+        item = self.coord_table.item(row_idx, 0)
+        record_id = item.data(Qt.ItemDataRole.UserRole) if item else None
+        record = next(
+            (dict(row) for row in self._coord_all_rows if row.get("id") == record_id),
+            {},
+        )
+        record["_id"] = record_id
+        return record
 
     def _coord_dialog(self, title, prefill=None):
         dlg = QDialog(self)
@@ -4452,7 +4446,7 @@ class StudentApp(QMainWindow):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        layout.setSpacing(8)
+        layout.setSpacing(20)
 
         self.workbook_state_badge = StatusBadge(
             "No workbook", role="WorkbookStateBadge"
@@ -4476,16 +4470,22 @@ class StudentApp(QMainWindow):
 
         controls = Card()
         controls.setObjectName("WorkbookToolbar")
+        controls.setFixedHeight(86)
         controls.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Maximum,
         )
-        controls_layout = QVBoxLayout(controls)
-        controls_layout.setContentsMargins(12, 10, 12, 10)
-        controls_layout.setSpacing(6)
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(16, 12, 16, 12)
+        controls_layout.setSpacing(12)
 
         file_row = QHBoxLayout()
-        file_row.setSpacing(Spacing.XS)
+        file_row.setSpacing(12)
+        file_icon = QLabel("XLSX")
+        file_icon.setObjectName("WorkbookFileIcon")
+        file_icon.setFixedSize(46, 46)
+        file_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        file_row.addWidget(file_icon)
         file_meta = QVBoxLayout()
         file_meta.setSpacing(2)
 
@@ -4498,13 +4498,10 @@ class StudentApp(QMainWindow):
         file_meta.addWidget(self.workbook_path_label)
         file_meta.addWidget(self.workbook_status_label)
         file_row.addLayout(file_meta, 1)
-        file_row.addWidget(
-            self.workbook_state_badge,
-            alignment=Qt.AlignmentFlag.AlignTop,
-        )
+        file_row.addWidget(self.workbook_state_badge, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self.workbook_open_saved_btn = workbook_btn(
-            "Open saved",
+            "Reload file",
             self.load_saved_workbook,
             icon=QStyle.StandardPixmap.SP_DialogOpenButton,
         )
@@ -4533,23 +4530,18 @@ class StudentApp(QMainWindow):
             QStyle.StandardPixmap.SP_FileIcon,
         )
 
-        file_actions = QHBoxLayout()
-        file_actions.setSpacing(Spacing.XS)
-        for button in (
-            self.workbook_open_saved_btn,
-            self.workbook_choose_btn,
-            self.workbook_save_btn,
-        ):
-            file_actions.addWidget(button)
-        file_actions.addStretch()
-        file_actions.addWidget(self.workbook_reload_btn)
-        file_actions.addWidget(self.workbook_excel_btn)
-        controls_layout.addLayout(file_row)
-        controls_layout.addLayout(file_actions)
+        self.workbook_save_btn.hide()
+        self.workbook_reload_btn.hide()
+        self.workbook_excel_btn.hide()
+        controls_layout.addLayout(file_row, 1)
+        controls_layout.addWidget(self.workbook_open_saved_btn)
+        controls_layout.addWidget(self.workbook_choose_btn)
 
-        self.workbook_sheet_controls = QWidget()
+        self.workbook_sheet_controls = Card()
+        self.workbook_sheet_controls.setObjectName("WorkbookSheetBar")
+        self.workbook_sheet_controls.setFixedHeight(52)
         sheet_row = QHBoxLayout(self.workbook_sheet_controls)
-        sheet_row.setContentsMargins(0, 0, 0, 0)
+        sheet_row.setContentsMargins(14, 7, 14, 7)
         sheet_row.setSpacing(Spacing.XS)
         sheet_lbl = QLabel("Sheet")
         sheet_lbl.setObjectName("ToolbarLabel")
@@ -4562,7 +4554,8 @@ class StudentApp(QMainWindow):
         sheet_row.addWidget(sheet_lbl)
         sheet_row.addWidget(self.workbook_sheet_combo)
         sheet_row.addWidget(self.workbook_sheet_summary_label, 1)
-        controls_layout.addWidget(self.workbook_sheet_controls)
+        layout.addWidget(controls)
+        layout.addWidget(self.workbook_sheet_controls)
 
         self.workbook_add_column_btn = workbook_btn("Insert column", self.insert_workbook_column, "SecondaryBtn")
         self.workbook_delete_column_btn = workbook_btn("Delete column", self.delete_workbook_column, "DangerBtn")
@@ -4584,14 +4577,13 @@ class StudentApp(QMainWindow):
         action_row.addWidget(self.workbook_sync_current_btn)
         action_row.addWidget(self.workbook_sync_all_btn)
         action_row.addWidget(self.workbook_export_btn)
-        controls_layout.addWidget(self.workbook_data_actions)
-        layout.addWidget(controls)
+        self.workbook_data_actions.hide()
 
         self.workbook_empty_card = EmptyState(
             "No workbook open",
-            "Use Open saved or Choose file above. After loading, select a sheet, review its rows, and sync approved changes.",
+            "Use Reload file or Choose file above. After loading, select a sheet and review its rows.",
         )
-        self.workbook_empty_card.setFixedHeight(244)
+        self.workbook_empty_card.setFixedHeight(458)
         self.workbook_empty_card.setAccessibleName("No workbook open")
         layout.addWidget(self.workbook_empty_card)
 
@@ -4600,9 +4592,11 @@ class StudentApp(QMainWindow):
         self.workbook_tabs.setUsesScrollButtons(True)
         self.workbook_tabs.setElideMode(Qt.TextElideMode.ElideRight)
         self.workbook_tabs.setMovable(False)
+        self.workbook_tabs.setFixedHeight(458)
         self.workbook_tabs.currentChanged.connect(self._on_workbook_tab_changed)
         self.workbook_tabs.setVisible(False)
-        layout.addWidget(self.workbook_tabs, 1)
+        layout.addWidget(self.workbook_tabs)
+        layout.addStretch()
 
         self._refresh_workbook_controls()
         self.stacked_widget.addWidget(widget)
@@ -4627,9 +4621,9 @@ class StudentApp(QMainWindow):
             self.workbook_save_btn.setEnabled(
                 has_workbook and self._workbook_dirty and not self._workbook_busy
             )
-            self.workbook_save_btn.setVisible(has_workbook)
-            self.workbook_reload_btn.setVisible(has_workbook)
-            self.workbook_excel_btn.setVisible(has_workbook)
+            self.workbook_save_btn.hide()
+            self.workbook_reload_btn.hide()
+            self.workbook_excel_btn.hide()
         if hasattr(self, "workbook_sheet_controls"):
             self.workbook_sheet_controls.setVisible(has_workbook)
         if hasattr(self, "workbook_data_actions"):
@@ -5411,6 +5405,9 @@ class StudentApp(QMainWindow):
             )
 
             self.remarks_edit.setPlainText(s.get("remarks") or "")
+            self.remarks_display.setText(
+                (s.get("remarks") or "").strip() or "No office notes recorded."
+            )
 
             photo_url = s.get("photo_url")
             self._load_photo_from_url(self.photo_label, photo_url)
@@ -5783,6 +5780,7 @@ class StudentApp(QMainWindow):
         self.form_title_label.setText("Loading student record…")
         self.save_form_btn.setEnabled(False)
         self._switch_page(3)
+        self.header_add_button.setEnabled(False)
 
         def fetch():
             student = self.student_repository.get_student_single(student_id)
@@ -5798,11 +5796,13 @@ class StudentApp(QMainWindow):
             student, resolved = result
             self._apply_student_form(student, resolved)
             self.save_form_btn.setEnabled(True)
+            self.header_add_button.setEnabled(True)
 
         def failed(error):
             if request_id != self._student_form_request:
                 return
             self.save_form_btn.setEnabled(True)
+            self.header_add_button.setEnabled(True)
             self.status_bar.showMessage(
                 "Could not load this student for editing. Refresh the profile and try again.",
                 8000,
@@ -5923,6 +5923,7 @@ class StudentApp(QMainWindow):
         editing_snapshot = dict(self._editing_snapshot or {})
         pending_photo = self._pending_photo
         self.save_form_btn.setEnabled(False)
+        self.header_add_button.setEnabled(False)
         self.status_bar.showMessage("Saving student...", 30000)
 
         def save():
@@ -5958,6 +5959,7 @@ class StudentApp(QMainWindow):
         def saved(result):
             student_id, was_editing = result
             self.save_form_btn.setEnabled(True)
+            self.header_add_button.setEnabled(True)
             self._clear_form()
             self._audit("update" if was_editing else "create", "student", student_id)
             self._on_students_changed()
@@ -5971,6 +5973,7 @@ class StudentApp(QMainWindow):
 
         def failed(error):
             self.save_form_btn.setEnabled(True)
+            self.header_add_button.setEnabled(True)
             logging.getLogger(__name__).error("Student save failed:\n%s", error)
             self.status_bar.showMessage("Student save failed", 5000)
             QMessageBox.critical(self, "Save error", error.strip().splitlines()[-1])

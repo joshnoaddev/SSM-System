@@ -116,20 +116,20 @@ class StudentSkeleton(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(base)
         width = max(260, self.width() - 16)
-        for row in range(min(6, max(1, self.height() // 104))):
-            top = 7 + row * 104
-            painter.drawRoundedRect(QRectF(8, top, width, 94), 8, 8)
+        for row in range(min(7, max(1, self.height() // 72))):
+            top = 5 + row * 72
+            painter.drawRoundedRect(QRectF(8, top, width, 64), 8, 8)
             painter.setBrush(theme_color("surface_subtle"))
             painter.drawRoundedRect(QRectF(28, top + 16, width * 0.28, 13), 6, 6)
             painter.drawRoundedRect(QRectF(28, top + 39, width * 0.42, 10), 5, 5)
-            painter.drawRoundedRect(QRectF(28, top + 64, width * 0.18, 22), 7, 7)
+            painter.drawRoundedRect(QRectF(28, top + 42, width * 0.18, 18), 7, 7)
             painter.setBrush(base)
 
 
 class StudentCardDelegate(QStyledItemDelegate):
     """Paint the compact table rows defined by the Figma directory frame."""
 
-    CARD_HEIGHT = 86
+    CARD_HEIGHT = 72
 
     def sizeHint(self, option, index):
         # Let QListView own the row width. Returning a cached viewport width
