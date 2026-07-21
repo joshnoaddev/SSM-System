@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
 )
@@ -45,7 +46,13 @@ from office_app.ui.components import (
     EmptyState,
     set_content_hugging_button,
 )
-from office_app.ui.motion import MotionCard, PulseController, animate_count
+from office_app.ui.motion import (
+    MotionCard,
+    PulseController,
+    animate_count,
+    animate_progress,
+)
+from office_app.utils.background_tasks import BackgroundTask
 from office_app.ui.views.student_list_model import (
     StudentCardDelegate,
     StudentListModel,
@@ -83,22 +90,19 @@ class StartupDialogRegressionTests(unittest.TestCase):
         self.dialog._set_loading_phase("database")
 
         states = [label.property("state") for label in self.dialog._loading_step_labels]
-        self.assertEqual(["complete", "active", "pending"], states)
-        self.assertIn("checked", self.dialog._loading_step_labels[0].text().lower())
-        self.assertIn("connecting", self.dialog._loading_step_labels[1].text().lower())
+        self.assertEqual(["complete", "active", "pending", "pending"], states)
+        self.assertIn("database", self.dialog._loading_step_labels[0].text().lower())
+        self.assertIn("settings", self.dialog._loading_step_labels[1].text().lower())
 
-    def test_continue_action_hugs_its_label(self):
+    def test_continue_action_matches_full_width_figma_control(self):
         self.dialog.show()
         _qt_application().processEvents()
 
         self.assertEqual(
-            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Expanding,
             self.dialog._continue_btn.sizePolicy().horizontalPolicy(),
         )
-        self.assertLess(
-            self.dialog._continue_btn.width(),
-            self.dialog._continue_btn.parentWidget().width(),
-        )
+        self.assertGreaterEqual(self.dialog._continue_btn.width(), 340)
 
 
 class ButtonDensityRegressionTests(unittest.TestCase):
@@ -291,6 +295,13 @@ class _FinancialClient:
 
 
 class RegressionTests(unittest.TestCase):
+    def test_fast_background_tasks_expose_completion_state(self):
+        task = BackgroundTask(lambda: "ready")
+
+        task.run()
+
+        self.assertTrue(task.done)
+
     def test_negative_amounts_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "negative"):
             ExpenseService.parse_amount("-1.00")
@@ -324,6 +335,26 @@ class RegressionTests(unittest.TestCase):
         self.assertTrue(status["allocated"])
         self.assertEqual(status["title"], "25% used")
         self.assertEqual(status["detail"], "PHP 250 / 1,000")
+
+    def test_visible_expense_rows_reconcile_every_displayed_figure(self):
+        summary = ExpenseService.reconcile_summary(
+            {
+                "total_budget": 4500,
+                "total_expenses": 999,
+                "remaining_balance": 3501,
+            },
+            [
+                {"amount": 575},
+                {"amount": 400},
+            ],
+            "2026-2027",
+        )
+        usage = ExpenseService.budget_usage(summary)
+
+        self.assertEqual(975, summary["total_expenses"])
+        self.assertEqual(3525, summary["remaining_balance"])
+        self.assertEqual(21, usage["percent"])
+        self.assertIn("PHP 975.00 of PHP 4,500.00", usage["message"])
 
     def test_financial_summaries_match_equivalent_uuid_and_text_ids(self):
         student_id = UUID("8a88f7c1-3287-4f75-856c-8f429db240e8")
@@ -456,7 +487,7 @@ class RegressionTests(unittest.TestCase):
         size = StudentCardDelegate().sizeHint(None, None)
 
         self.assertEqual(size.width(), 1)
-        self.assertEqual(StudentCardDelegate.CARD_HEIGHT, 108)
+        self.assertEqual(StudentCardDelegate.CARD_HEIGHT, 86)
         self.assertEqual(size.height(), StudentCardDelegate.CARD_HEIGHT)
 
     def test_dashboard_counts_status_variants(self):
@@ -864,16 +895,40 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(label.text(), "42")
         self.assertIsNotNone(application)
 
+    def test_progress_animation_finishes_at_synchronized_value(self):
+        application = _qt_application()
+        progress = QProgressBar()
+        progress.setRange(0, 100)
+        progress.setValue(0)
+
+        animate_progress(
+            progress,
+            62,
+            motion_enabled=True,
+            duration_ms=180,
+        )
+        QTest.qWait(80)
+        intermediate = progress.value()
+        QTest.qWait(160)
+
+        self.assertGreater(intermediate, 0)
+        self.assertLess(intermediate, 62)
+        self.assertEqual(progress.value(), 62)
+        self.assertIsNotNone(application)
+
     def test_reduced_motion_skips_count_and_pulse_movement(self):
         application = _qt_application()
         label = QLabel("0")
         animate_count(label, 42, motion_enabled=False)
+        progress = QProgressBar()
+        animate_progress(progress, 62, motion_enabled=False)
         pulse = PulseController(label, lambda: False)
         pulse.start()
         card = MotionCard(motion_enabled=lambda: False)
         card.reveal()
 
         self.assertEqual(label.text(), "42")
+        self.assertEqual(progress.value(), 62)
         self.assertIsNone(label.graphicsEffect())
         self.assertIsInstance(
             card.graphicsEffect(),

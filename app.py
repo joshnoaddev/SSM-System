@@ -14,11 +14,13 @@ from PyQt6.QtWidgets import (
     QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QScrollArea, QComboBox, QStatusBar, QDialog, QTabWidget,
     QProgressBar, QProgressDialog, QFrame, QGridLayout, QScrollBar, QDateEdit,
-    QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QSizePolicy, QStyle
+    QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QSizePolicy, QStyle,
+    QMenu
 )
 from PyQt6.QtWidgets import (
     QComboBox as NativeComboBox,
     QLabel as NativeLabel,
+    QProgressBar as NativeProgressBar,
     QPushButton as NativePushButton,
 )
 from PyQt6.QtCore import (
@@ -27,7 +29,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPixmap, QPainter, QColor, QPen, QIcon, QImage, QLinearGradient, QFont,
-    QRadialGradient, QPainterPath
+    QRadialGradient, QPainterPath, QAction, QKeySequence
 )
 
 from supabase import Client
@@ -65,6 +67,7 @@ from office_app.ui.motion import (
     MotionCard,
     PulseController,
     animate_count,
+    animate_progress,
     attach_press_feedback,
     fade_in,
 )
@@ -176,6 +179,29 @@ def sidebar_operator_pixmap(name: str, *, size: int = 30) -> QPixmap:
     painter.setBrush(theme_color("accent"))
     painter.drawRoundedRect(bounds, 8, 8)
     painter.setPen(theme_color("sidebar"))
+    font = QFont("Segoe UI", 9)
+    font.setBold(True)
+    painter.setFont(font)
+    painter.drawText(bounds, Qt.AlignmentFlag.AlignCenter, user_initials(name))
+    painter.end()
+    return pixmap
+
+
+def startup_operator_pixmap(name: str, *, selected: bool, size: int = 32) -> QPixmap:
+    """Render the compact rounded-square operator mark used in Figma startup rows."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    bounds = QRectF(0, 0, size, size)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(
+        theme_color("accent") if selected else theme_color("primary_soft")
+    )
+    painter.drawRoundedRect(bounds, 8, 8)
+    painter.setPen(
+        theme_color("primary") if selected else theme_color("success")
+    )
     font = QFont("Segoe UI", 9)
     font.setBold(True)
     painter.setFont(font)
@@ -316,77 +342,87 @@ class StartupDialog(QDialog):
             background: transparent;
         }
         QDialog QWidget#SplashPanel {
-            background: transparent;
-            border: none;
+            background: @primary;
+            border: 1px solid @primary_selected;
             border-radius: 18px;
         }
         QDialog QWidget#SplashPage { background: transparent; }
-        QDialog QLabel { color: white; background: transparent; }
+        QDialog QLabel { background: transparent; }
         QDialog QStackedWidget { background: transparent; }
-        QDialog QWidget#StartupBrand { background: transparent; }
+        QDialog QWidget#StartupBrand { background: @primary_hover; }
         QDialog QFrame#StartupSurface {
             background: @surface;
-            border: 1px solid rgba(255,255,255,0.22);
-            border-radius: 16px;
+            border: none;
+            border-radius: 18px;
         }
         QDialog QFrame#StartupSurface QLabel { color: @text_primary; }
         QDialog *#StartupEyebrow {
-            color: @primary;
-            font-family: "Cascadia Mono", "Consolas", monospace;
+            color: @success;
+            font-family: "Segoe UI", sans-serif;
             font-size: 9px;
             font-weight: 700;
-            letter-spacing: 1px;
         }
         QDialog *#StartupTitle {
             color: @text_primary;
-            font-family: "Bahnschrift SemiBold", "Segoe UI", sans-serif;
-            font-size: 23px;
+            font-family: "Segoe UI", sans-serif;
+            font-size: 22px;
             font-weight: 700;
         }
         QDialog *#StartupDescription {
             color: @text_secondary;
-            font-size: 12px;
-            font-weight: 500;
+            font-size: 11px;
+            font-weight: 400;
         }
         QDialog QFrame#LoadingProfile {
             background: @primary_soft;
-            border: 1px solid @primary_selected;
-            border-radius: 8px;
+            border: 1px solid @border;
+            border-radius: 9px;
         }
-        QDialog *#LoadingProfileName { color: @text_primary; font-size: 13px; font-weight: 700; }
+        QDialog *#LoadingProfileName { color: @text_primary; font-size: 13px; font-weight: 600; }
         QDialog *#LoadingProfileMeta { color: @text_secondary; font-size: 10px; }
-        QDialog *#StartupStep { color: @text_secondary; font-size: 11px; font-weight: 600; }
-        QDialog *#StartupStep[state="active"] { color: @primary; }
-        QDialog *#StartupStep[state="complete"] { color: @success; }
+        QDialog *#StartupStep { color: @disabled; font-size: 11px; font-weight: 400; }
+        QDialog *#StartupStep[state="active"] { color: @text_primary; font-weight: 600; }
+        QDialog *#StartupStep[state="complete"] { color: @text_primary; }
         QDialog *#StartupStep[state="danger"] { color: @danger; }
         QDialog *#SplashOrg {
-            color: rgba(255,255,255,0.92);
-            font-size: 12px;
-            font-weight: 700;
+            color: #BBD3CA;
+            font-size: 10px;
+            font-weight: 600;
         }
         QDialog *#SplashTitle {
             color: white;
-            font-size: 24px;
-            font-weight: 800;
+            font-size: 22px;
+            font-weight: 700;
         }
         QDialog *#SplashPrompt {
-            color: rgba(255,255,255,0.88);
-            font-size: 13px;
-            font-weight: 600;
+            color: #C4D9D1;
+            font-size: 12px;
+            font-weight: 400;
         }
         QDialog *#SplashVersion {
-            color: rgba(255,255,255,0.58);
+            color: #8FC2B2;
             font-size: 10px;
+            font-weight: 500;
         }
-        QDialog *#SplashWelcome {
-            color: white;
-            font-size: 26px;
-            font-weight: 800;
+        QDialog *#StartupLogoText {
+            color: @primary;
+            font-size: 12px;
+            font-weight: 700;
         }
         QDialog *#SplashStatus {
-            color: @text_primary;
-            font-size: 12px;
+            color: @success;
+            font-size: 10px;
             font-weight: 600;
+        }
+        QDialog *#SplashProgressValue {
+            color: @text_primary;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        QDialog *#StartupMotionNote {
+            color: @disabled;
+            font-size: 8px;
+            font-weight: 500;
         }
         QDialog QFrame#StartupSurface QProgressBar {
             border: none;
@@ -394,7 +430,7 @@ class StartupDialog(QDialog):
             background: @border_subtle;
             max-height: 8px;
         }
-        QDialog QFrame#StartupSurface QProgressBar::chunk { background: @primary; border-radius: 4px; }
+        QDialog QFrame#StartupSurface QProgressBar::chunk { background: @success; border-radius: 4px; }
 
         QDialog QPushButton#ContinueBtn {
             background: @primary;
@@ -402,8 +438,8 @@ class StartupDialog(QDialog):
             border: none;
             border-radius: 8px;
             padding: 0px;
-            font-size: 13px;
-            font-weight: 700;
+            font-size: 12px;
+            font-weight: 600;
         }
         QDialog QPushButton#ContinueBtn:hover { background: @primary_hover; color: @on_brand; }
         QDialog QPushButton#ContinueBtn:pressed { background: @primary_pressed; }
@@ -461,9 +497,9 @@ class StartupDialog(QDialog):
 
         # ── Root stacked layout (page 0 = user select, page 1 = connecting) ──
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setContentsMargins(0, 0, 0, 0)
 
-        panel = AnimatedSplashPanel(animate=not self._reduce_motion)
+        panel = QWidget()
         panel.setObjectName("SplashPanel")
 
         panel_layout = QVBoxLayout(panel)
@@ -480,42 +516,59 @@ class StartupDialog(QDialog):
             QTimer.singleShot(80, self._start_splash_entrance)
 
     # ── Page 1: User Selection ─────────────────────────────────────────────────
-    def _build_startup_brand(self):
+    def _build_startup_brand(self, *, loading=False):
         brand = QWidget()
         brand.setObjectName("StartupBrand")
-        brand.setFixedWidth(190)
+        brand.setFixedWidth(218)
         layout = QVBoxLayout(brand)
-        layout.setContentsMargins(0, 8, 0, 4)
+        layout.setContentsMargins(30, 32, 30, 18)
         layout.setSpacing(0)
 
-        logo = QLabel()
-        set_logo_pixmap(logo, 108, 74)
-        layout.addWidget(logo, alignment=Qt.AlignmentFlag.AlignLeft)
-        layout.addSpacing(16)
+        logo_mark = QWidget()
+        logo_mark.setFixedSize(52, 52)
+        mark_image = NativeLabel(logo_mark)
+        mark_image.setGeometry(0, 0, 52, 52)
+        mark_pixmap = QPixmap(resource_path(os.path.join("assets", "ssm_startup_mark.png")))
+        if not mark_pixmap.isNull():
+            mark_image.setPixmap(
+                mark_pixmap.scaled(
+                    52,
+                    52,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        logo_text = NativeLabel("SSM", logo_mark)
+        logo_text.setObjectName("StartupLogoText")
+        logo_text.setGeometry(0, 0, 52, 52)
+        logo_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(logo_mark, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addSpacing(27)
 
-        org = QLabel("YWAM BALUT")
+        org = NativeLabel("YWAM BALUT")
         org.setObjectName("SplashOrg")
-        set_on_brand_text(org, alpha=235)
         layout.addWidget(org)
-        layout.addSpacing(7)
+        layout.addSpacing(14)
 
-        title = QLabel("Student Support\nManagement")
+        title = NativeLabel("Student Support\nManagement")
         title.setObjectName("SplashTitle")
         title.setWordWrap(True)
-        set_on_brand_text(title)
         layout.addWidget(title)
-        layout.addSpacing(10)
+        layout.addSpacing(12)
 
-        caption = QLabel("A focused workspace for student records, attendance, and office follow-up.")
+        caption_text = (
+            "Opening the office workspace and checking synchronized services."
+            if loading
+            else "A focused workspace for student records, attendance, and office follow-up."
+        )
+        caption = NativeLabel(caption_text)
         caption.setObjectName("SplashPrompt")
         caption.setWordWrap(True)
-        set_on_brand_text(caption, alpha=210)
         layout.addWidget(caption)
         layout.addStretch(1)
 
-        version = QLabel(app_version_label())
+        version = NativeLabel(f"SSM v{UpdaterService.CURRENT_VERSION}")
         version.setObjectName("SplashVersion")
-        set_on_brand_text(version, alpha=160)
         layout.addWidget(version)
         return brand
 
@@ -523,31 +576,32 @@ class StartupDialog(QDialog):
         page = QWidget()
         page.setObjectName("SplashPage")
         page_layout = QHBoxLayout(page)
-        page_layout.setContentsMargins(28, 24, 20, 24)
-        page_layout.setSpacing(22)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
         page_layout.addWidget(self._build_startup_brand())
 
         surface = QFrame()
         surface.setObjectName("StartupSurface")
+        surface.setFixedWidth(422)
         surface_layout = QVBoxLayout(surface)
-        surface_layout.setContentsMargins(22, 20, 22, 18)
+        surface_layout.setContentsMargins(34, 32, 34, 18)
         surface_layout.setSpacing(0)
 
-        eyebrow = QLabel("OPERATOR")
+        eyebrow = QLabel("CHOOSE OPERATOR")
         eyebrow.setObjectName("StartupEyebrow")
         surface_layout.addWidget(eyebrow)
-        surface_layout.addSpacing(7)
+        surface_layout.addSpacing(9)
 
-        title = QLabel("Who is working?")
+        title = QLabel("Who is making changes?")
         title.setObjectName("StartupTitle")
         surface_layout.addWidget(title)
-        surface_layout.addSpacing(7)
+        surface_layout.addSpacing(4)
 
-        prompt = QLabel("Choose the name saved with changes in the activity log.")
+        prompt = QLabel("This identifies the person recorded in the audit history.")
         prompt.setObjectName("StartupDescription")
         prompt.setWordWrap(True)
         surface_layout.addWidget(prompt)
-        surface_layout.addSpacing(16)
+        surface_layout.addSpacing(30)
 
         self._user_cards = []
         for name in USERS:
@@ -560,59 +614,76 @@ class StartupDialog(QDialog):
             card.setAccessibleDescription(
                 "Selects the name recorded in the activity log."
             )
-            card.setFixedHeight(54)
+            card.setFixedHeight(52)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             card.clicked.connect(
                 lambda _checked=False, n=name: self._select_user(n)
             )
 
             card_layout = QHBoxLayout(card)
-            card_layout.setContentsMargins(10, 7, 12, 7)
-            card_layout.setSpacing(10)
+            card_layout.setContentsMargins(12, 9, 12, 9)
+            card_layout.setSpacing(14)
 
             avatar_lbl = QLabel()
             avatar_lbl.setObjectName("UserAvatar")
             avatar_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            avatar_lbl.setFixedSize(34, 34)
+            avatar_lbl.setFixedSize(32, 32)
+
+            name_copy = QVBoxLayout()
+            name_copy.setContentsMargins(0, 0, 0, 0)
+            name_copy.setSpacing(0)
 
             name_lbl = QLabel(name)
             name_lbl.setObjectName("UserName")
             name_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+
+            meta_lbl = QLabel(f"Changes recorded as {name}")
+            meta_lbl.setObjectName("UserMeta")
+            meta_lbl.setStyleSheet(
+                f"color: {css_color('text_secondary')}; background: transparent; "
+                "font-size: 10px; font-weight: 400;"
+            )
+            name_copy.addWidget(name_lbl)
+            name_copy.addWidget(meta_lbl)
 
             state_lbl = QLabel()
             state_lbl.setObjectName("UserState")
             state_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
             state_lbl.setMinimumWidth(58)
 
-            for clickable in (avatar_lbl, name_lbl, state_lbl):
+            for clickable in (avatar_lbl, name_lbl, meta_lbl, state_lbl):
                 clickable.setCursor(Qt.CursorShape.PointingHandCursor)
                 clickable.mousePressEvent = lambda event, n=name: self._select_user(n)
 
             card._avatar_label = avatar_lbl
             card._name_label = name_lbl
+            card._meta_label = meta_lbl
             card._state_label = state_lbl
             card_layout.addWidget(avatar_lbl)
-            card_layout.addWidget(name_lbl, 1)
+            card_layout.addLayout(name_copy, 1)
             card_layout.addWidget(state_lbl)
 
             surface_layout.addWidget(card)
-            surface_layout.addSpacing(7)
+            surface_layout.addSpacing(12)
             self._user_cards.append(card)
 
-        surface_layout.addStretch(1)
+        surface_layout.addSpacing(12)
         continue_btn = QPushButton()
         self._continue_btn = continue_btn
         continue_btn.setObjectName("ContinueBtn")
         continue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         continue_btn.setAccessibleDescription("Continues to the secure workspace startup check.")
-        set_content_hugging_button(continue_btn, min_width=148, height=44)
+        continue_btn.setFixedHeight(40)
+        continue_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         continue_btn.setDefault(True)
         continue_btn.setStyleSheet(self._continue_button_style())
         continue_btn.clicked.connect(self._on_continue)
-        surface_layout.addWidget(
-            continue_btn,
-            alignment=Qt.AlignmentFlag.AlignRight,
-        )
+        surface_layout.addWidget(continue_btn)
+        surface_layout.addStretch(1)
+
+        motion_note = QLabel("Motion: 180 ms fade-in  •  selected row uses 140 ms color transition")
+        motion_note.setObjectName("StartupMotionNote")
+        surface_layout.addWidget(motion_note)
 
         page_layout.addWidget(surface, 1)
         if self._user_cards:
@@ -624,40 +695,51 @@ class StartupDialog(QDialog):
 
     def _set_loading_phase(self, phase):
         states = {
-            "version": ("active", "pending", "pending"),
-            "database": ("complete", "active", "pending"),
-            "workspace": ("complete", "complete", "active"),
-            "complete": ("complete", "complete", "complete"),
-            "failed": ("complete", "danger", "pending"),
-        }.get(phase, ("pending", "pending", "pending"))
+            "version": ("active", "pending", "pending", "pending"),
+            "database": ("complete", "active", "pending", "pending"),
+            "workspace": ("complete", "complete", "active", "pending"),
+            "complete": ("complete", "complete", "complete", "complete"),
+            "failed": ("danger", "pending", "pending", "pending"),
+        }.get(phase, ("pending", "pending", "pending", "pending"))
         copy = (
             {
-                "pending": "1  Check application version",
-                "active": "1  Checking application version",
-                "complete": "1  Application version checked",
+                "pending": "Checking database connection",
+                "active": "Checking database connection",
+                "complete": "Checking database connection",
+                "danger": "Database connection unavailable",
             },
             {
-                "pending": "2  Connect to office database",
-                "active": "2  Connecting to office database",
-                "complete": "2  Office database connected",
-                "danger": "2  Office database unavailable",
+                "pending": "Loading application settings",
+                "active": "Loading application settings",
+                "complete": "Loading application settings",
             },
             {
-                "pending": "3  Open shared workspace",
-                "active": "3  Opening shared workspace",
-                "complete": "3  Shared workspace ready",
+                "pending": "Loading student records",
+                "active": "Loading student records",
+                "complete": "Loading student records",
+            },
+            {
+                "pending": "Preparing dashboard",
+                "active": "Preparing dashboard",
+                "complete": "Preparing dashboard",
             },
         )
+        glyphs = {
+            "complete": "✓",
+            "active": "•",
+            "pending": " ",
+            "danger": "×",
+        }
         for label, state, labels in zip(self._loading_step_labels, states, copy):
             label.setProperty("state", state)
-            label.setText(labels.get(state, labels["pending"]))
+            label.setText(f"{glyphs[state]}     {labels.get(state, labels['pending'])}")
             label.style().unpolish(label)
             label.style().polish(label)
 
     def _start_splash_entrance(self):
         """Start compositor-safe splash motion without child paint effects."""
         self._window_entrance = QPropertyAnimation(self, b"windowOpacity", self)
-        self._window_entrance.setDuration(220)
+        self._window_entrance.setDuration(180)
         self._window_entrance.setStartValue(0.0)
         self._window_entrance.setEndValue(1.0)
         self._window_entrance.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -672,7 +754,7 @@ class StartupDialog(QDialog):
             card.setChecked(selected)
             card.setStyleSheet(self._user_card_style(selected))
             card._avatar_label.setPixmap(
-                avatar_icon(card_name, selected=selected, size=30).pixmap(QSize(30, 30))
+                startup_operator_pixmap(card_name, selected=selected, size=32)
             )
             card._name_label.setStyleSheet(self._user_name_style(selected))
             card._state_label.setText("Selected" if selected else "Choose")
@@ -681,24 +763,24 @@ class StartupDialog(QDialog):
             self._continue_btn.setText(f"Continue as {name}")
         if hasattr(self, "loading_user_name"):
             self.loading_user_name.setText(name)
-            self.loading_user_avatar.setPixmap(
-                avatar_icon(name, selected=True, size=30).pixmap(QSize(30, 30))
-            )
+            self.loading_user_avatar.setPixmap(startup_operator_pixmap(name, selected=True))
+        if hasattr(self, "loading_title"):
+            self.loading_title.setText(f"Welcome, {name}")
 
     def _user_card_style(self, selected: bool) -> str:
         if selected:
             return f"""
                 QPushButton#UserCard {{
                     background: {css_color('primary_soft')};
-                    border: 1.5px solid {css_color('primary_selected')};
-                    border-radius: 8px;
+                    border: 1px solid {css_color('success')};
+                    border-radius: 9px;
                 }}
             """
         return f"""
             QPushButton#UserCard {{
                 background: {css_color('surface')};
-                border: 1px solid {css_color('border_subtle')};
-                border-radius: 8px;
+                border: 1px solid {css_color('border')};
+                border-radius: 9px;
             }}
             QPushButton#UserCard:hover {{
                 background: {css_color('surface_subtle')};
@@ -707,7 +789,7 @@ class StartupDialog(QDialog):
         """
 
     def _user_name_style(self, selected: bool) -> str:
-        color = css_color("primary_pressed") if selected else css_color("text_primary")
+        color = css_color("text_primary")
         return f"""
             color: {color};
             background: transparent;
@@ -746,6 +828,11 @@ class StartupDialog(QDialog):
     def _on_continue(self):
         self._select_user(self.selected_user)
         self._stack.setCurrentIndex(1)
+        fade_in(
+            self.loading_title,
+            motion_enabled=not self._reduce_motion,
+            duration_ms=180,
+        )
         if self._pending_sb is not None:
             self.start_ping(self._pending_sb)
 
@@ -758,90 +845,93 @@ class StartupDialog(QDialog):
         page = QWidget()
         page.setObjectName("SplashPage")
         page_layout = QHBoxLayout(page)
-        page_layout.setContentsMargins(28, 24, 20, 24)
-        page_layout.setSpacing(22)
-        page_layout.addWidget(self._build_startup_brand())
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+        page_layout.addWidget(self._build_startup_brand(loading=True))
 
         surface = QFrame()
         surface.setObjectName("StartupSurface")
+        surface.setFixedWidth(422)
         lay = QVBoxLayout(surface)
-        lay.setContentsMargins(22, 20, 22, 18)
+        lay.setContentsMargins(34, 32, 34, 18)
         lay.setSpacing(0)
 
-        eyebrow = QLabel("STARTING SSM")
+        eyebrow = QLabel("OPENING WORKSPACE")
         eyebrow.setObjectName("StartupEyebrow")
         lay.addWidget(eyebrow)
-        lay.addSpacing(7)
+        lay.addSpacing(9)
 
-        title = QLabel("Preparing your workspace")
-        title.setObjectName("StartupTitle")
-        lay.addWidget(title)
-        lay.addSpacing(13)
+        self.loading_title = QLabel(f"Welcome, {self.selected_user}")
+        self.loading_title.setObjectName("StartupTitle")
+        lay.addWidget(self.loading_title)
+        lay.addSpacing(4)
+
+        description = QLabel("Preparing your student-support workspace.")
+        description.setObjectName("StartupDescription")
+        lay.addWidget(description)
+        lay.addSpacing(26)
 
         profile = QFrame()
         profile.setObjectName("LoadingProfile")
-        profile.setFixedHeight(50)
+        profile.setFixedHeight(56)
         profile_layout = QHBoxLayout(profile)
-        profile_layout.setContentsMargins(10, 7, 10, 7)
-        profile_layout.setSpacing(10)
+        profile_layout.setContentsMargins(14, 11, 14, 11)
+        profile_layout.setSpacing(14)
         self.loading_user_avatar = QLabel()
         self.loading_user_avatar.setFixedSize(32, 32)
-        self.loading_user_avatar.setPixmap(
-            avatar_icon(self.selected_user, selected=True, size=30).pixmap(QSize(30, 30))
-        )
+        self.loading_user_avatar.setPixmap(startup_operator_pixmap(self.selected_user, selected=True))
         profile_copy = QVBoxLayout()
         profile_copy.setContentsMargins(0, 0, 0, 0)
         profile_copy.setSpacing(0)
         self.loading_user_name = QLabel(self.selected_user)
         self.loading_user_name.setObjectName("LoadingProfileName")
-        profile_meta = QLabel("Activity log operator")
+        profile_meta = QLabel("Changes will be recorded under this operator.")
         profile_meta.setObjectName("LoadingProfileMeta")
         profile_copy.addWidget(self.loading_user_name)
         profile_copy.addWidget(profile_meta)
         profile_layout.addWidget(self.loading_user_avatar)
         profile_layout.addLayout(profile_copy, 1)
         lay.addWidget(profile)
-        lay.addSpacing(16)
+        lay.addSpacing(22)
 
-        self.welcome_label = QLabel(f"Welcome, {self.selected_user}")
-        self.welcome_label.setObjectName("StartupDescription")
-        self.welcome_label.setFixedHeight(18)
-        self.welcome_effect = QGraphicsOpacityEffect(self.welcome_label)
-        self.welcome_effect.setOpacity(0.0)
-        self.welcome_label.setGraphicsEffect(self.welcome_effect)
-        self.welcome_label.setVisible(False)
-        lay.addWidget(self.welcome_label)
-        lay.addSpacing(2)
+        progress_header = QHBoxLayout()
+        progress_header.setContentsMargins(0, 0, 0, 0)
+        progress_header.setSpacing(8)
+        self.progress_value_label = QLabel("0%")
+        self.progress_value_label.setObjectName("SplashProgressValue")
+        progress_header.addWidget(self.progress_value_label)
+        progress_header.addStretch(1)
 
-        self.status_label = QLabel("Connecting to database")
+        self.status_label = QLabel("Checking database connection")
         self.status_label.setObjectName("SplashStatus")
-        self.status_label.setWordWrap(True)
-        self.status_label.setMinimumHeight(20)
-        lay.addWidget(self.status_label)
-        lay.addSpacing(10)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        progress_header.addWidget(self.status_label)
+        lay.addLayout(progress_header)
+        lay.addSpacing(7)
 
-        self.progress = QProgressBar()
+        self.progress = NativeProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(8)
         lay.addWidget(self.progress)
-        lay.addSpacing(14)
+        lay.addSpacing(17)
 
         self._loading_step_labels = []
         for step in (
-            "Check application version",
-            "Connect to office database",
-            "Open shared workspace",
+            "Checking database connection",
+            "Loading application settings",
+            "Loading student records",
+            "Preparing dashboard",
         ):
             label = QLabel(step)
             label.setObjectName("StartupStep")
             label.setProperty("state", "pending")
-            label.setFixedHeight(22)
+            label.setFixedHeight(27)
             lay.addWidget(label)
             self._loading_step_labels.append(label)
 
-        lay.addStretch()
+        lay.addStretch(1)
 
         self._connect_actions = QWidget()
         self._connect_actions.setVisible(False)
@@ -850,20 +940,23 @@ class StartupDialog(QDialog):
         self._connect_actions_layout.setSpacing(8)
         lay.addWidget(self._connect_actions)
 
+        motion_note = QLabel(
+            "Motion: 180 ms entrance  •  760 ms progress pulse  •  success handoff under 1 second"
+        )
+        motion_note.setObjectName("StartupMotionNote")
+        lay.addWidget(motion_note)
+
         page_layout.addWidget(surface, 1)
         self._set_loading_phase("version")
 
         return page
     # ── Connection logic ───────────────────────────────────────────────────────
     def start_ping(self, sb: Client):
-        self.welcome_label.setText(f"Welcome, {self.selected_user}!")
-        self.welcome_label.setVisible(False)
-        self.welcome_effect.setOpacity(0.0)
+        self.loading_title.setText(f"Welcome, {self.selected_user}")
         self.status_label.setStyleSheet("")
         self._set_loading_phase("version")
-        self._set_loading_status(f"Checking version {UpdaterService.CURRENT_VERSION}")
+        self._set_loading_status("Loading application settings")
         self._set_loading_progress(25)
-        self._start_dot_anim()
         self._pending_sb = sb  # keep ref so _on_update_checked can use it
 
         # --- AUTO UPDATE CHECK (non-blocking) ---
@@ -888,14 +981,14 @@ class StartupDialog(QDialog):
         latest_version, url = update_info
         if self._dot_timer:
             self._dot_timer.stop()
-        self.status_label.setText(f"Update {latest_version} available! Downloading...")
+        self.status_label.setText(f"Downloading update {latest_version}")
         self._set_loading_progress(50)
 
         # Start the download (safely pushing UI updates back to main thread)
         self.updater.download_and_install(
             url=url,
             progress_callback=lambda p: QTimer.singleShot(0, lambda: self._set_loading_progress(50 + int(p * 0.45), animate=False)),
-            success_callback=lambda: QTimer.singleShot(0, lambda: self.status_label.setText("Restarting to apply update...")),
+            success_callback=lambda: QTimer.singleShot(0, lambda: self.status_label.setText("Restarting to apply update")),
             error_callback=lambda err: QTimer.singleShot(0, lambda: self._resume_boot_after_update_error(err))
         )
         # Do NOT start normal boot — we are updating and will os._exit()
@@ -903,9 +996,8 @@ class StartupDialog(QDialog):
     def _resume_boot_after_update_error(self, error):
         """Continue startup if an update cannot be installed."""
         self._set_loading_phase("database")
-        self._set_loading_status("Update skipped. Connecting to database")
+        self._set_loading_status("Checking database connection")
         self._set_loading_progress(75)
-        self._start_dot_anim()
         self._start_normal_boot(self._pending_sb)
 
     def _resume_boot_after_version_check_error(self):
@@ -916,7 +1008,7 @@ class StartupDialog(QDialog):
         if self._dot_timer:
             self._dot_timer.stop()
         self._set_loading_progress(50)
-        self.status_label.setText(f"{message}.")
+        self.status_label.setText(message)
         QTimer.singleShot(
             160 if self._reduce_motion else 950,
             self._continue_after_version_check,
@@ -924,9 +1016,8 @@ class StartupDialog(QDialog):
 
     def _continue_after_version_check(self):
         self._set_loading_phase("database")
-        self._set_loading_status("Connecting to database")
+        self._set_loading_status("Loading student records")
         self._set_loading_progress(75)
-        self._start_dot_anim()
         self._start_normal_boot(self._pending_sb)
 
     def _start_normal_boot(self, sb):
@@ -955,6 +1046,7 @@ class StartupDialog(QDialog):
 
     def _set_loading_progress(self, value, animate=True):
         value = max(0, min(100, int(value)))
+        self.progress_value_label.setText(f"{value}%")
         self.progress.setRange(0, 100)
         if not animate or self._reduce_motion:
             self.progress.setValue(value)
@@ -969,7 +1061,6 @@ class StartupDialog(QDialog):
 
     def _tick_dots(self):
         self._dot_count = (self._dot_count + 1) % 4
-        self.status_label.setText(self._loading_status_base + "." * self._dot_count)
 
     def _on_connected(self):
         if self._dot_timer:
@@ -977,19 +1068,13 @@ class StartupDialog(QDialog):
         self.success = True
         self._set_loading_phase("complete")
         self.status_label.setText("Workspace ready")
-        self.welcome_label.setVisible(True)
+        self.loading_title.setText(f"Welcome, {self.selected_user}")
 
         if self._reduce_motion:
-            self.welcome_effect.setOpacity(1.0)
             self.progress.setValue(100)
+            self.progress_value_label.setText("100%")
             QTimer.singleShot(250, self.accept)
             return
-
-        self._welcome_anim = QPropertyAnimation(self.welcome_effect, b"opacity", self)
-        self._welcome_anim.setDuration(220)
-        self._welcome_anim.setStartValue(0.0)
-        self._welcome_anim.setEndValue(1.0)
-        self._welcome_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         self._progress_anim = QPropertyAnimation(self.progress, b"value", self)
         self._progress_anim.setDuration(240)
@@ -997,7 +1082,7 @@ class StartupDialog(QDialog):
         self._progress_anim.setEndValue(100)
         self._progress_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-        self._welcome_anim.start()
+        self.progress_value_label.setText("100%")
         self._progress_anim.start()
         QTimer.singleShot(650, self.accept)
 
@@ -1008,7 +1093,9 @@ class StartupDialog(QDialog):
         self._set_loading_phase("failed")
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
-        self.status_label.setText(friendly_connection_error(msg))
+        self.progress_value_label.setText("--")
+        self.status_label.setText("Connection unavailable")
+        self.status_label.setToolTip(friendly_connection_error(msg))
         self.status_label.setStyleSheet(f"color: {css_color('danger')};")
         if self._failure_actions is not None:
             return
@@ -1061,10 +1148,37 @@ class CircularProgress(QWidget):
         super().__init__(parent)
         self.value = 0
         self.setFixedSize(size, size)
+        self.setAccessibleName("Profile completion")
+        self.setAccessibleDescription("Profile completion is 0 percent")
 
     def set_value(self, val):
-        self.value = val
+        self.value = max(0, min(100, int(val)))
+        self.setAccessibleDescription(
+            f"Profile completion is {self.value} percent"
+        )
         self.update()
+
+    def get_value(self):
+        return self.value
+
+    progressValue = pyqtProperty(int, get_value, set_value)
+
+    def animate_to(self, val, *, motion_enabled=True, duration_ms=260):
+        """Animate progress without delaying the synchronized final value."""
+        target = max(0, min(100, int(val)))
+        previous = getattr(self, "_value_animation", None)
+        if previous is not None:
+            previous.stop()
+        if not motion_enabled or self.value == target:
+            self.set_value(target)
+            return
+        animation = QPropertyAnimation(self, b"progressValue", self)
+        animation.setDuration(min(320, max(120, int(duration_ms))))
+        animation.setStartValue(self.value)
+        animation.setEndValue(target)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._value_animation = animation
+        animation.start()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1141,6 +1255,10 @@ class StudentApp(QMainWindow):
         self._master_ref_cache = None
         self._workbook_revision = 0
         self._dashboard_request = 0
+        self._profile_request = 0
+        self._student_form_request = 0
+        self._expense_request = 0
+        self._coordinator_request = 0
         self._dashboard_motion_cards = []
         self._dashboard_insight_headers = []
         self._dashboard_revealed = False
@@ -1186,8 +1304,8 @@ class StudentApp(QMainWindow):
         content_widget = QWidget()
         content_widget.setObjectName("MainContent")
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(24, 18, 20, 14)
-        content_layout.setSpacing(16)
+        content_layout.setContentsMargins(28, 20, 28, 18)
+        content_layout.setSpacing(14)
 
         # Workspace header: page context on the left, live office state on the right.
         header = QFrame()
@@ -1196,26 +1314,20 @@ class StudentApp(QMainWindow):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(14)
 
-        header_mark = QFrame()
-        header_mark.setObjectName("HeaderMark")
-        header_mark.setFixedWidth(4)
-        header_mark.setMinimumHeight(62)
-        header_layout.addWidget(header_mark)
-
         title_layout = QVBoxLayout()
-        title_layout.setSpacing(2)
+        title_layout.setSpacing(3)
         today = datetime.now().strftime("%A, %B %d").replace(" 0", " ")
         self.page_eyebrow_label = QLabel(
             f"STUDENT SUPPORT OFFICE  /  {today.upper()}"
         )
         self.page_eyebrow_label.setObjectName("HeaderEyebrow")
+        self.page_eyebrow_label.hide()
         self.page_title_label = TitleLabel("Dashboard")
         self.page_title_label.setObjectName("HeaderTitle")
         self.page_subtitle_label = SubtitleLabel(
             "Student support activity and records at a glance"
         )
         self.page_subtitle_label.setObjectName("HeaderSubtitle")
-        title_layout.addWidget(self.page_eyebrow_label)
         title_layout.addWidget(self.page_title_label)
         title_layout.addWidget(self.page_subtitle_label)
         header_layout.addLayout(title_layout, 1)
@@ -1234,13 +1346,10 @@ class StudentApp(QMainWindow):
         )
         self.connection_badge.setFixedHeight(30)
         self.connection_badge.setToolTip("Live Supabase connection status")
-        self.header_add_button = ActionButton("New record")
+        self.connection_badge.hide()
+        self.header_add_button = ActionButton("Refresh data", variant="secondary")
         self.header_add_button.setObjectName("HeaderPrimaryAction")
-        self.header_add_button.clicked.connect(self.nav_add)
-        header_actions.addWidget(
-            self.connection_badge,
-            alignment=Qt.AlignmentFlag.AlignVCenter,
-        )
+        self.header_add_button.clicked.connect(self._header_action_clicked)
         header_actions.addWidget(
             self.header_add_button,
             alignment=Qt.AlignmentFlag.AlignVCenter,
@@ -1252,12 +1361,6 @@ class StudentApp(QMainWindow):
 
         content_layout.addWidget(header)
         
-        # Divider
-        divider = QFrame()
-        divider.setObjectName("Divider")
-        divider.setFrameShape(QFrame.Shape.HLine)
-        content_layout.addWidget(divider)
-
         # Stacked Widget for Screens
         self.stacked_widget = QStackedWidget()
         content_layout.addWidget(self.stacked_widget)
@@ -1276,6 +1379,7 @@ class StudentApp(QMainWindow):
             status_message_fn=self._student_list_status_message,
         )
         self.student_list_view.student_selected.connect(self._open_student_profile)
+        self.student_list_view.new_student_requested.connect(self.nav_add)
         self.student_list_view.students_changed.connect(self._on_students_changed)
         self.student_list_view.students_imported.connect(
             lambda count: self._audit(
@@ -1302,6 +1406,7 @@ class StudentApp(QMainWindow):
         self._update_compact_header()
         self._apply_button_cursors()
         self._apply_accessibility_defaults()
+        self._install_shortcuts()
 
         # Initialize Data
         self.nav_dashboard()
@@ -1354,6 +1459,9 @@ class StudentApp(QMainWindow):
             return
         if index >= self.stacked_widget.count():
             return
+        active_nav = self._nav_button_for_page(index)
+        if active_nav is not None:
+            self._set_active_nav(active_nav)
         self._update_page_header(index)
         if self.stacked_widget.currentIndex() == index:
             return
@@ -1379,14 +1487,16 @@ class StudentApp(QMainWindow):
 
     def _update_page_header(self, index: int) -> None:
         """Keep the workspace header useful and specific to the active screen."""
+        form_header = (
+            ("Edit student", "Update identity, support, and office record details")
+            if self._editing_id
+            else ("Add student", "Create a complete student record")
+        )
         pages = {
-            0: (
-                self._dashboard_greeting(),
-                "Student care, sponsorship, and records at a glance",
-            ),
-            1: ("Students", "Search, filter, and open student records"),
-            2: ("Student profile", "Identity, sponsorship, and progress details"),
-            3: ("Add student", "Create a complete student record"),
+            0: ("Dashboard", "A clear view of student support, budgets, and recent activity."),
+            1: ("Students", "Search, filter, and manage student records."),
+            2: ("Student profile", "Review support details, completion, and current-year assistance."),
+            3: form_header,
             4: ("Expenses", "Budget and expense history for the selected student"),
             5: ("Workbook", "Review and safely update the local master workbook"),
             6: ("Coordinators", "Contact directory for ministry coordinators"),
@@ -1396,6 +1506,39 @@ class StudentApp(QMainWindow):
         self.page_title_label.setText(title)
         self.page_subtitle_label.setText(subtitle)
         self.header_add_button.setVisible(index != 3)
+        self.header_add_button.setText(
+            "Back to profile" if index == 4 else "Refresh data"
+        )
+        self.header_add_button.setProperty("variant", "secondary")
+        self.header_add_button.style().unpolish(self.header_add_button)
+        self.header_add_button.style().polish(self.header_add_button)
+
+    def _nav_button_for_page(self, index: int):
+        """Return the navigation owner for a workspace page.
+
+        Detail pages deliberately remain owned by their parent destination so
+        programmatic navigation cannot leave a stale item highlighted.
+        """
+        if index == 3:
+            return self.btn_stud if self._editing_id else self.btn_add
+        return {
+            0: self.btn_dash,
+            1: self.btn_stud,
+            2: self.btn_stud,
+            4: self.btn_exp,
+            5: self.btn_workbook,
+            6: self.btn_coordinators,
+            7: self.btn_settings,
+        }.get(index)
+
+    def _header_action_clicked(self):
+        if self.stacked_widget.currentIndex() == 4:
+            if self.current_student_id:
+                self._switch_page(2)
+            else:
+                self.nav_students()
+            return
+        self._sidebar_refresh()
 
     def resizeEvent(self, event) -> None:
         """Keep the workspace header usable at the supported minimum width."""
@@ -1409,15 +1552,15 @@ class StudentApp(QMainWindow):
             return
         compact = self.width() < 1120
         self.page_subtitle_label.setVisible(not compact)
-        self.header_add_button.setText("Add" if compact else "New record")
+        self.header_add_button.setText(
+            "Back to profile"
+            if self.stacked_widget.currentIndex() == 4
+            else "Refresh data"
+        )
         set_content_hugging_button(self.header_add_button)
         if hasattr(self, "sync_panel"):
             self.sync_panel.setFixedHeight(126 if compact else 96)
-        today = datetime.now().strftime("%A, %B %d").replace(" 0", " ")
-        office_label = "SSM OFFICE" if compact else "STUDENT SUPPORT OFFICE"
-        self.page_eyebrow_label.setText(
-            f"{office_label}  /  {today.upper()}"
-        )
+        self.page_eyebrow_label.hide()
 
     def _dashboard_greeting(self) -> str:
         hour = time.localtime().tm_hour
@@ -1441,6 +1584,46 @@ class StudentApp(QMainWindow):
             )
         for combo in self.findChildren(QComboBox):
             combo.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def _install_shortcuts(self) -> None:
+        """Install predictable desktop shortcuts without adding visual chrome."""
+        shortcuts = (
+            ("New student", QKeySequence.StandardKey.New, self.nav_add),
+            ("Find", QKeySequence.StandardKey.Find, self._focus_page_search),
+            ("Refresh", QKeySequence.StandardKey.Refresh, self._sidebar_refresh),
+            ("Back", QKeySequence.StandardKey.Back, self._navigate_back),
+        )
+        self._shortcut_actions = []
+        for text, sequence, callback in shortcuts:
+            action = QAction(text, self)
+            action.setShortcut(QKeySequence(sequence))
+            action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+            action.triggered.connect(callback)
+            self.addAction(action)
+            self._shortcut_actions.append(action)
+
+        self.header_add_button.setToolTip("Create a new student record (Ctrl+N)")
+        self.sidebar_refresh_btn.setToolTip("Refresh the current data view (F5)")
+
+    def _focus_page_search(self) -> None:
+        """Focus the search field that belongs to the current workspace."""
+        index = self.stacked_widget.currentIndex()
+        if index == 1:
+            field = self.student_list_view.search_name
+        elif index == 6:
+            field = self.coord_search
+        else:
+            self.nav_students()
+            field = self.student_list_view.search_name
+        field.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        field.selectAll()
+
+    def _navigate_back(self) -> None:
+        index = self.stacked_widget.currentIndex()
+        if index in (2, 3, 4):
+            self.nav_students()
+        elif index != 0:
+            self.nav_dashboard()
 
     def _apply_accessibility_defaults(self) -> None:
         """Add useful names and keyboard focus without changing workflows."""
@@ -1499,32 +1682,32 @@ class StudentApp(QMainWindow):
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setFixedWidth(224)
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(12, 14, 12, 12)
+        sidebar_layout.setContentsMargins(12, 18, 12, 10)
         sidebar_layout.setSpacing(4)
 
         brand_container = QWidget()
         brand_container.setObjectName("BrandPanel")
-        brand_container.setFixedHeight(68)
+        brand_container.setFixedHeight(66)
         brand_layout = QHBoxLayout(brand_container)
         brand_layout.setContentsMargins(6, 2, 6, 2)
         brand_layout.setSpacing(11)
 
         logo_well = QWidget()
         logo_well.setObjectName("BrandLogoWell")
-        logo_well.setFixedSize(46, 46)
+        logo_well.setFixedSize(42, 42)
         logo_layout = QVBoxLayout(logo_well)
-        logo_layout.setContentsMargins(4, 5, 4, 5)
+        logo_layout.setContentsMargins(3, 4, 3, 4)
 
         logo_lbl = NativeLabel()
         logo_lbl.setObjectName("BrandLogo")
-        set_logo_pixmap(logo_lbl, 38, 36)
+        set_logo_pixmap(logo_lbl, 36, 34)
         logo_layout.addWidget(logo_lbl)
 
         brand_copy = QVBoxLayout()
         brand_copy.setSpacing(1)
         self.brand_lbl = NativeLabel("SSM Office")
         self.brand_lbl.setObjectName("BrandTitle")
-        brand_sub = NativeLabel("Student support desk")
+        brand_sub = NativeLabel("Student records")
         brand_sub.setObjectName("BrandSubtitle")
         brand_copy.addWidget(self.brand_lbl)
         brand_copy.addWidget(brand_sub)
@@ -1532,11 +1715,7 @@ class StudentApp(QMainWindow):
         brand_layout.addLayout(brand_copy, 1)
         sidebar_layout.addWidget(brand_container)
 
-        brand_divider = QFrame()
-        brand_divider.setObjectName("SidebarDivider")
-        brand_divider.setFixedHeight(1)
-        sidebar_layout.addWidget(brand_divider)
-        sidebar_layout.addSpacing(9)
+        sidebar_layout.addSpacing(10)
 
         self.btn_dash = NativePushButton("Dashboard")
         self.btn_stud = NativePushButton("Students")
@@ -1576,7 +1755,7 @@ class StudentApp(QMainWindow):
         self.btn_coordinators.clicked.connect(self.nav_coordinators)
         self.btn_settings.clicked.connect(self.nav_settings)
 
-        records_label = NativeLabel("Workspace")
+        records_label = NativeLabel("RECORDS")
         records_label.setObjectName("SidebarGroupLabel")
         sidebar_layout.addWidget(records_label)
         for button in (
@@ -1589,32 +1768,25 @@ class StudentApp(QMainWindow):
             sidebar_layout.addWidget(button)
 
         sidebar_layout.addSpacing(10)
-        tools_label = NativeLabel("Resources")
+        tools_label = NativeLabel("TOOLS")
         tools_label.setObjectName("SidebarGroupLabel")
         sidebar_layout.addWidget(tools_label)
         sidebar_layout.addWidget(self.btn_workbook)
         sidebar_layout.addWidget(self.btn_settings)
         sidebar_layout.addStretch()
 
-        footer_divider = QFrame()
-        footer_divider.setObjectName("SidebarDivider")
-        footer_divider.setFixedHeight(1)
-        sidebar_layout.addWidget(footer_divider)
-        sidebar_layout.addSpacing(8)
-
         user_panel = QWidget()
         user_panel.setObjectName("OperatorPanel")
+        user_panel.setFixedHeight(62)
         user_layout = QVBoxLayout(user_panel)
-        user_layout.setContentsMargins(10, 9, 10, 10)
-        user_layout.setSpacing(6)
-        user_label = NativeLabel("Changes recorded as")
+        user_layout.setContentsMargins(10, 7, 10, 7)
+        user_layout.setSpacing(3)
+        user_label = NativeLabel("ACTIVE OPERATOR")
         user_label.setObjectName("SidebarCaption")
-        operator_row = QHBoxLayout()
-        operator_row.setContentsMargins(0, 0, 0, 0)
-        operator_row.setSpacing(8)
         self.sidebar_operator_avatar = NativeLabel()
         self.sidebar_operator_avatar.setObjectName("OperatorAvatar")
-        self.sidebar_operator_avatar.setFixedSize(30, 30)
+        self.sidebar_operator_avatar.setFixedSize(0, 0)
+        self.sidebar_operator_avatar.hide()
         self.sidebar_operator_avatar.setPixmap(
             sidebar_operator_pixmap(self._initial_user)
         )
@@ -1632,9 +1804,7 @@ class StudentApp(QMainWindow):
         )
         self.user_combo.currentTextChanged.connect(self._on_user_changed)
         user_layout.addWidget(user_label)
-        operator_row.addWidget(self.sidebar_operator_avatar)
-        operator_row.addWidget(self.user_combo, 1)
-        user_layout.addLayout(operator_row)
+        user_layout.addWidget(self.user_combo)
         sidebar_layout.addWidget(user_panel)
         sidebar_layout.addSpacing(4)
 
@@ -1648,10 +1818,10 @@ class StudentApp(QMainWindow):
         self.sidebar_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.sidebar_refresh_btn.setFixedHeight(40)
         self.sidebar_refresh_btn.clicked.connect(self._sidebar_refresh)
-        sidebar_layout.addWidget(self.sidebar_refresh_btn)
+        self.sidebar_refresh_btn.hide()
 
         version_label = NativeLabel(
-            f"SSM DESKTOP  /  v{UpdaterService.CURRENT_VERSION}"
+            f"SSM   /   v{UpdaterService.CURRENT_VERSION}"
         )
         version_label.setObjectName("SidebarVersion")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1941,8 +2111,8 @@ class StudentApp(QMainWindow):
         button = getattr(self, "sidebar_refresh_btn", None)
         if button is not None:
             button.setEnabled(False)
-            button.setText("Refreshing...")
-        self.status_bar.showMessage("Refreshing...", 1200)
+            button.setText("Refreshing…")
+        self.status_bar.showMessage("Refreshing…", 1200)
 
         idx = self.stacked_widget.currentIndex()
         task = None
@@ -1950,16 +2120,21 @@ class StudentApp(QMainWindow):
             task = self.refresh_dashboard()
         elif idx == 1:
             task = self.student_list_view.load_student_list()
+        elif idx == 2 and self.current_student_id:
+            task = self._load_profile(self.current_student_id)
+        elif idx == 4 and self.current_student_id:
+            task = self._refresh_expenses_view()
         elif idx == 6:
-            self.load_coordinators()
+            task = self.load_coordinators()
 
         if button is not None and task is not None:
-            task.signals.finished.connect(
-                lambda: (
-                    button.setEnabled(True),
-                    button.setText("Refresh data"),
-                )
-            )
+            def restore_refresh_button():
+                button.setEnabled(True)
+                button.setText("Refresh data")
+
+            task.signals.finished.connect(restore_refresh_button)
+            if getattr(task, "done", False):
+                QTimer.singleShot(0, restore_refresh_button)
         elif button is not None:
             QTimer.singleShot(
                 450,
@@ -2119,16 +2294,15 @@ class StudentApp(QMainWindow):
         layout = QVBoxLayout(widget)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.setSpacing(16)
-        layout.setContentsMargins(2, 2, 8, 20)
+        layout.setContentsMargins(0, 0, 6, 18)
         scroll.setWidget(widget)
         page_layout.addWidget(scroll)
 
-        layout.addWidget(self._build_sync_panel())
-
         overview_row = QHBoxLayout()
-        overview_lbl = StrongBodyLabel("Current synced roster")
+        overview_lbl = StrongBodyLabel("Current synchronized records")
         overview_lbl.setObjectName("SectionTitle")
         self._dashboard_intro = overview_lbl
+        overview_lbl.hide()
         self.dashboard_state_label = QLabel("Preparing data")
         self.dashboard_state_label.setObjectName("DashboardState")
         self.dashboard_state_label.setFixedHeight(26)
@@ -2146,88 +2320,178 @@ class StudentApp(QMainWindow):
         self.lbl_active_val   = QLabel("--"); self.lbl_active_val.setObjectName("CardValue")
         self.lbl_inactive_val = QLabel("--"); self.lbl_inactive_val.setObjectName("CardValue")
         self.lbl_graduated_val = QLabel("--"); self.lbl_graduated_val.setObjectName("CardValue")
+        self.dashboard_budget_value = QLabel("--")
+        self.dashboard_budget_value.setObjectName("CardValue")
+        self.dashboard_pending_value = QLabel("--")
+        self.dashboard_pending_value.setObjectName("CardValue")
 
         self.dashboard_metric_cards = [
             self._build_card(
-                "All students",
-                self.lbl_total_val,
-                "primary",
-                "Current masterlist",
-            ),
-            self._build_card(
-                "Active",
-                self.lbl_active_val,
-                "success",
+                "ACTIVE STUDENTS", self.lbl_active_val, "success",
                 "Currently supported",
             ),
             self._build_card(
-                "Inactive",
-                self.lbl_inactive_val,
-                "danger",
-                "Inactive or removed",
+                "GRADUATED", self.lbl_graduated_val, "graduated",
+                "Completed the program",
             ),
             self._build_card(
-                "Graduated",
-                self.lbl_graduated_val,
-                "graduated",
-                "Completed the program",
+                "BUDGET USED", self.dashboard_budget_value, "warning",
+                "Current school year",
+            ),
+            self._build_card(
+                "PENDING RECORDS", self.dashboard_pending_value, "danger",
+                "Profiles that need review",
             ),
         ]
         self._relayout_dashboard_metrics()
         layout.addLayout(self.dashboard_cards_grid)
 
-        self.dashboard_insights_grid = QGridLayout()
-        self.dashboard_insights_grid.setHorizontalSpacing(16)
-        self.dashboard_insights_grid.setVerticalSpacing(16)
-        self.dashboard_area_list = QListWidget()
-        self.dashboard_sponsor_list = QListWidget()
-        self.dashboard_attention_list = QListWidget()
-        self.dashboard_area_list.setAccessibleName("Students grouped by area")
-        self.dashboard_sponsor_list.setAccessibleName("Students grouped by sponsor")
-        self.dashboard_attention_list.setAccessibleName(
-            "Student profiles that need attention"
+        overview = QHBoxLayout()
+        overview.setSpacing(16)
+
+        budget_card = Card()
+        budget_card.setObjectName("DashboardPanel")
+        budget_card.setFixedHeight(242)
+        budget_layout = QVBoxLayout(budget_card)
+        budget_layout.setContentsMargins(20, 16, 20, 14)
+        budget_layout.setSpacing(7)
+        budget_title = StrongBodyLabel("Budget overview")
+        budget_title.setObjectName("CardHeading")
+        budget_caption = QLabel("Current-school-year allocation and utilization")
+        budget_caption.setObjectName("Caption")
+        budget_layout.addWidget(budget_title)
+        budget_layout.addWidget(budget_caption)
+        budget_amount_row = QHBoxLayout()
+        self.dashboard_budget_spent = QLabel("PHP --")
+        self.dashboard_budget_spent.setObjectName("DashboardHeroValue")
+        self.dashboard_budget_of = QLabel("used of PHP --")
+        self.dashboard_budget_of.setObjectName("Caption")
+        budget_amount_row.addWidget(self.dashboard_budget_spent)
+        budget_amount_row.addWidget(self.dashboard_budget_of)
+        budget_amount_row.addStretch()
+        budget_layout.addLayout(budget_amount_row)
+        budget_meta = QHBoxLayout()
+        self.dashboard_budget_percent = QLabel("0% used")
+        self.dashboard_budget_percent.setObjectName("BudgetStatus")
+        self.dashboard_budget_remaining = QLabel("PHP -- remaining")
+        self.dashboard_budget_remaining.setObjectName("Caption")
+        budget_meta.addWidget(self.dashboard_budget_percent)
+        budget_meta.addStretch()
+        budget_meta.addWidget(self.dashboard_budget_remaining)
+        budget_layout.addLayout(budget_meta)
+        self.dashboard_budget_bar = QProgressBar()
+        self.dashboard_budget_bar.setObjectName("BudgetProgress")
+        self.dashboard_budget_bar.setRange(0, 100)
+        self.dashboard_budget_bar.setTextVisible(False)
+        self.dashboard_budget_bar.setFixedHeight(7)
+        budget_layout.addWidget(self.dashboard_budget_bar)
+        budget_scale = QHBoxLayout()
+        zero = QLabel("0")
+        zero.setObjectName("Caption")
+        self.dashboard_budget_scale_max = QLabel("PHP 0")
+        self.dashboard_budget_scale_max.setObjectName("Caption")
+        budget_scale.addWidget(zero)
+        budget_scale.addStretch()
+        budget_scale.addWidget(self.dashboard_budget_scale_max)
+        budget_layout.addLayout(budget_scale)
+        budget_rule = QFrame()
+        budget_rule.setObjectName("Divider")
+        budget_rule.setFixedHeight(1)
+        budget_layout.addWidget(budget_rule)
+        budget_footer = QHBoxLayout()
+        pace_label = QLabel("Monthly pace")
+        pace_label.setObjectName("Caption")
+        self.dashboard_monthly_pace = StrongBodyLabel("PHP --")
+        self.dashboard_budget_health = StatusBadge("No allocation", state="neutral")
+        budget_footer.addWidget(pace_label)
+        budget_footer.addWidget(self.dashboard_monthly_pace)
+        budget_footer.addStretch()
+        budget_footer.addWidget(self.dashboard_budget_health)
+        budget_layout.addLayout(budget_footer)
+        overview.addWidget(budget_card, 5)
+
+        progress_card = Card()
+        progress_card.setObjectName("DashboardPanel")
+        progress_card.setFixedHeight(242)
+        progress_layout = QVBoxLayout(progress_card)
+        progress_layout.setContentsMargins(20, 16, 20, 14)
+        progress_layout.setSpacing(5)
+        progress_title = StrongBodyLabel("Student progress")
+        progress_title.setObjectName("CardHeading")
+        progress_caption = QLabel("Profile completion across active records")
+        progress_caption.setObjectName("Caption")
+        progress_layout.addWidget(progress_title)
+        progress_layout.addWidget(progress_caption)
+        self.dashboard_progress_rows = {}
+        for key, label_text, tone in (
+            ("complete", "Complete", "success"),
+            ("progress", "In progress", "warning"),
+            ("review", "Needs review", "danger"),
+        ):
+            row_meta = QHBoxLayout()
+            label = StrongBodyLabel(label_text)
+            value = StrongBodyLabel("--")
+            row_meta.addWidget(label)
+            row_meta.addStretch()
+            row_meta.addWidget(value)
+            bar = QProgressBar()
+            bar.setObjectName("DashboardProfileProgress")
+            bar.setProperty("tone", tone)
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(7)
+            progress_layout.addLayout(row_meta)
+            progress_layout.addWidget(bar)
+            self.dashboard_progress_rows[key] = (value, bar)
+        progress_layout.addStretch()
+        overview.addWidget(progress_card, 3)
+        layout.addLayout(overview)
+
+        recent_card = Card()
+        recent_card.setObjectName("DashboardPanel")
+        recent_card.setFixedHeight(246)
+        recent_layout = QVBoxLayout(recent_card)
+        recent_layout.setContentsMargins(14, 12, 14, 10)
+        recent_layout.setSpacing(7)
+        recent_header = QHBoxLayout()
+        recent_copy = QVBoxLayout()
+        recent_copy.setSpacing(2)
+        recent_title = StrongBodyLabel("Recent student updates")
+        recent_title.setObjectName("CardHeading")
+        recent_caption = QLabel("Latest synchronized student records")
+        recent_caption.setObjectName("Caption")
+        recent_copy.addWidget(recent_title)
+        recent_copy.addWidget(recent_caption)
+        recent_header.addLayout(recent_copy)
+        recent_header.addStretch()
+        view_all = ActionButton("View all students", variant="secondary")
+        view_all.clicked.connect(self.nav_students)
+        set_content_hugging_button(view_all, height=38)
+        recent_header.addWidget(view_all)
+        recent_layout.addLayout(recent_header)
+        self.dashboard_recent_table = QTableWidget()
+        self.dashboard_recent_table.setObjectName("DashboardRecentTable")
+        self.dashboard_recent_table.setColumnCount(5)
+        self.dashboard_recent_table.setHorizontalHeaderLabels(
+            ["STUDENT", "STATUS", "PROFILE", "BUDGET", "UPDATED"]
         )
-        self.dashboard_area_list.itemClicked.connect(self._open_dashboard_area)
-        self.dashboard_sponsor_list.itemClicked.connect(self._open_dashboard_sponsor)
-        self.dashboard_attention_list.itemClicked.connect(self._on_dashboard_student_click)
-        self.dashboard_area_list.itemActivated.connect(self._open_dashboard_area)
-        self.dashboard_sponsor_list.itemActivated.connect(
-            self._open_dashboard_sponsor
-        )
-        self.dashboard_attention_list.itemActivated.connect(
-            self._on_dashboard_student_click
-        )
-        self.dashboard_area_card = self._build_dashboard_list_card(
-                "Students by area",
-                "Open an area to see its students",
-                self.dashboard_area_list,
-                role="summary",
-                eyebrow_text="ACTIVE ROSTER",
-            )
-        self.dashboard_sponsor_card = self._build_dashboard_list_card(
-                "Sponsor summary",
-                "Open a sponsor's student list",
-                self.dashboard_sponsor_list,
-                role="summary",
-                eyebrow_text="ACTIVE SUPPORT",
-            )
-        self.dashboard_attention_card = self._build_dashboard_list_card(
-                "Needs attention",
-                "Profiles missing important details",
-                self.dashboard_attention_list,
-                role="attention",
-                eyebrow_text="PROFILE QUALITY",
-            )
-        self.dashboard_area_caption = self.dashboard_area_card._dashboard_caption_label
-        self.dashboard_sponsor_caption = self.dashboard_sponsor_card._dashboard_caption_label
-        self.dashboard_attention_caption = self.dashboard_attention_card._dashboard_caption_label
-        self.dashboard_insight_cards = [
-            self.dashboard_area_card,
-            self.dashboard_sponsor_card,
-            self.dashboard_attention_card,
-        ]
-        self._relayout_dashboard_insights()
-        layout.addLayout(self.dashboard_insights_grid)
+        self.dashboard_recent_table.verticalHeader().hide()
+        self.dashboard_recent_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.dashboard_recent_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.dashboard_recent_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.dashboard_recent_table.setShowGrid(False)
+        self.dashboard_recent_table.setAlternatingRowColors(False)
+        self.dashboard_recent_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in range(1, 5):
+            self.dashboard_recent_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self.dashboard_recent_table.cellDoubleClicked.connect(self._open_dashboard_recent)
+        recent_layout.addWidget(self.dashboard_recent_table)
+        layout.addWidget(recent_card)
+
+        sync_panel = self._build_sync_panel()
+        sync_panel.setFixedHeight(84)
+        layout.addWidget(sync_panel)
         self.stacked_widget.addWidget(page)
 
     def _build_sync_panel(self):
@@ -2497,27 +2761,29 @@ class StudentApp(QMainWindow):
         card.setObjectName("DashboardMetricCard")
         card.setProperty("tone", tone)
         card.setMinimumWidth(0)
-        card.setFixedHeight(86)
-        l = QVBoxLayout(card)
-        l.setContentsMargins(8, 7, 8, 8)
-        l.setSpacing(2)
-        title_row = QHBoxLayout()
-        title_row.setSpacing(8)
+        card.setFixedHeight(104)
+        shell = QHBoxLayout(card)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
         marker = QFrame()
         marker.setObjectName("MetricMarker")
         marker.setProperty("tone", tone)
-        marker.setFixedSize(8, 8)
+        marker.setFixedWidth(4)
+        marker.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        shell.addWidget(marker)
+        content = QWidget()
+        l = QVBoxLayout(content)
+        l.setContentsMargins(14, 12, 14, 11)
+        l.setSpacing(2)
         t = StrongBodyLabel(title_text)
         t.setObjectName("CardTitle")
         t.setWordWrap(True)
-        title_row.addWidget(marker)
-        title_row.addWidget(t)
-        title_row.addStretch()
-        l.addLayout(title_row)
+        l.addWidget(t)
         l.addWidget(value_label)
         caption = QLabel(caption_text)
         caption.setObjectName("MetricCaption")
         l.addWidget(caption)
+        shell.addWidget(content, 1)
         value_label.setAccessibleName(f"{title_text} count")
         value_label.setAccessibleDescription(caption_text)
         card.setAccessibleName(f"{title_text} dashboard metric")
@@ -2623,14 +2889,24 @@ class StudentApp(QMainWindow):
         self.dashboard_state_label.style().polish(self.dashboard_state_label)
 
         def fetch_rows():
-            return self.student_repository.list_students(columns=(
+            raw_rows = self.student_repository.list_students(columns=(
                 "id,last_name,first_name,status,sponsor,area,grade,contact,"
-                "school,birthday,photo_url,sheet_synced_at,source_sheet_name"
+                "school,birthday,photo_url,gender,address,city,parents,course,"
+                "remarks,sheet_synced_at,source_sheet_name"
             ))
+            roster_rows = self.dashboard_service.latest_sync_cohort(raw_rows)
+            rows = self.dashboard_service.dedupe_students(roster_rows)
+            student_ids = [row.get("id") for row in rows if row.get("id")]
+            school_year = self._current_school_year()
+            summaries = self.expense_service.get_financial_summaries(
+                student_ids, school_year
+            )
+            return raw_rows, rows, summaries, school_year
 
-        def apply_rows(raw_rows):
+        def apply_rows(result):
             if request_id != self._dashboard_request:
                 return
+            raw_rows, rows, summaries, school_year = result
             # Sync preserves older/manual rows for history. The overview uses
             # only the newest transaction cohort so its totals match the
             # latest workbook result on every office PC.
@@ -2638,8 +2914,6 @@ class StudentApp(QMainWindow):
                 str(row.get("sheet_synced_at") or "").strip()
                 for row in raw_rows
             )
-            roster_rows = self.dashboard_service.latest_sync_cohort(raw_rows)
-            rows = self.dashboard_service.dedupe_students(roster_rows)
             counts = self.dashboard_service.summary_counts(rows)
             animate_count(
                 self.lbl_total_val,
@@ -2667,7 +2941,77 @@ class StudentApp(QMainWindow):
                 for row in rows
                 if self.dashboard_service.status_bucket(row.get("status")) == "active"
             ]
-            self._refresh_dashboard_lists(active_students)
+            dashboard = self.dashboard_service.build_lists(active_students)
+            pending = int(dashboard.get("attention_count") or 0)
+            animate_count(
+                self.dashboard_pending_value,
+                pending,
+                motion_enabled=not self._reduce_motion,
+            )
+
+            total_budget = sum(
+                float(summary.get("total_budget") or 0)
+                for summary in summaries.values()
+            )
+            total_spent = sum(
+                float(summary.get("total_expenses") or 0)
+                for summary in summaries.values()
+            )
+            usage = self.expense_service.budget_usage({
+                "total_budget": total_budget,
+                "total_expenses": total_spent,
+                "remaining_balance": total_budget - total_spent,
+            })
+            self.dashboard_budget_value.setText(f"PHP {total_spent:,.0f}")
+            self.dashboard_budget_spent.setText(f"PHP {total_spent:,.0f}")
+            self.dashboard_budget_of.setText(f"used of PHP {total_budget:,.0f}")
+            self.dashboard_budget_percent.setText(f"{usage['percent']}% used")
+            self.dashboard_budget_remaining.setText(
+                f"PHP {usage['remaining']:,.0f} remaining"
+                if total_budget > 0 else "No budget allocated"
+            )
+            self.dashboard_budget_scale_max.setText(f"PHP {total_budget:,.0f}")
+            elapsed_months = max(1, ((datetime.now().month - 6) % 12) + 1)
+            self.dashboard_monthly_pace.setText(
+                f"PHP {total_spent / elapsed_months:,.0f}"
+            )
+            state = usage["state"]
+            self.dashboard_budget_bar.setProperty("state", state)
+            self.dashboard_budget_bar.style().unpolish(self.dashboard_budget_bar)
+            self.dashboard_budget_bar.style().polish(self.dashboard_budget_bar)
+            animate_progress(
+                self.dashboard_budget_bar,
+                usage["percent"],
+                motion_enabled=not self._reduce_motion,
+            )
+            health_text = {
+                "success": "Healthy",
+                "warning": "Watch closely",
+                "danger": "Over budget",
+                "neutral": "No allocation",
+            }.get(state, "No allocation")
+            self.dashboard_budget_health.set_state(state, health_text)
+
+            progress_counts = {"complete": 0, "progress": 0, "review": 0}
+            for student in active_students:
+                completion = self._profile_completion_percent(student)
+                if completion >= 90:
+                    progress_counts["complete"] += 1
+                elif completion >= 60:
+                    progress_counts["progress"] += 1
+                else:
+                    progress_counts["review"] += 1
+            active_total = max(1, len(active_students))
+            for key, count in progress_counts.items():
+                value, bar = self.dashboard_progress_rows[key]
+                value.setText(str(count))
+                animate_progress(
+                    bar,
+                    round(count * 100 / active_total),
+                    motion_enabled=not self._reduce_motion,
+                )
+
+            self._populate_dashboard_recent(rows, summaries)
             record_kind = "synced" if has_sync_metadata else "database"
             self.dashboard_state_label.setText(
                 f"Updated just now  /  {counts['total']} {record_kind} records"
@@ -2704,6 +3048,61 @@ class StudentApp(QMainWindow):
             logging.getLogger(__name__).error("Dashboard refresh failed:\n%s", error)
 
         return self._run_background(fetch_rows, apply_rows, show_error)
+
+    @staticmethod
+    def _current_school_year() -> str:
+        now = datetime.now()
+        start = now.year if now.month >= 6 else now.year - 1
+        return f"{start}-{start + 1}"
+
+    def _populate_dashboard_recent(self, rows, summaries) -> None:
+        table = self.dashboard_recent_table
+        ordered = sorted(
+            rows,
+            key=lambda row: (
+                str(row.get("sheet_synced_at") or ""),
+                str(row.get("last_name") or ""),
+            ),
+            reverse=True,
+        )[:3]
+        table.setRowCount(len(ordered))
+        for row_index, student in enumerate(ordered):
+            full_status, status_text, _ = self._status_style(student.get("status"))
+            gender = str(student.get("gender") or "").strip().upper()
+            name = f"{student.get('last_name', '')}, {student.get('first_name', '')}".strip(", ")
+            if gender:
+                name += f" ({gender})"
+            completion = self._profile_completion_percent(student)
+            budget = self.expense_service.budget_card_status(
+                summaries.get(student.get("id"))
+            )
+            budget_text = budget.get("detail") or "No budget allocated"
+            updated = str(student.get("sheet_synced_at") or "").strip()
+            if updated:
+                try:
+                    updated = datetime.fromisoformat(
+                        updated.replace("Z", "+00:00")
+                    ).strftime("%b %d").replace(" 0", " ")
+                except ValueError:
+                    updated = updated[:10]
+            else:
+                updated = "Current"
+            values = [name or "Unnamed student", status_text, f"{completion}%", budget_text, updated]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if column == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, student.get("id"))
+                table.setItem(row_index, column, item)
+            table.setRowHeight(row_index, 38)
+        table.setAccessibleName("Recent synchronized student updates")
+
+    def _open_dashboard_recent(self, row, _column):
+        item = self.dashboard_recent_table.item(row, 0)
+        if item is None:
+            return
+        student_id = item.data(Qt.ItemDataRole.UserRole)
+        if student_id:
+            self._open_student_profile(str(student_id))
     def _filter_current_master_rows(self, rows):
         with self._workbook_lock:
             return self.masterlist_service.filter_current_rows(
@@ -2860,7 +3259,7 @@ class StudentApp(QMainWindow):
         self._set_active_nav(self.btn_stud)
         self._switch_page(1)
     # ── SCREEN 2: PROFILE ─────────────────────────────────────────────────────
-    def create_profile_screen(self):
+    def _create_profile_screen_legacy(self):
         widget = QWidget()
         outer = QVBoxLayout(widget)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -3055,15 +3454,16 @@ class StudentApp(QMainWindow):
         remarks_title.addWidget(remarks_copy)
         remarks_header.addLayout(remarks_title)
         remarks_header.addStretch()
-        save_btn = PrimaryPushButton("Save remarks")
-        save_btn.clicked.connect(self.save_remarks)
-        set_content_hugging_button(save_btn)
+        self.save_remarks_btn = PrimaryPushButton("Save remarks")
+        self.save_remarks_btn.clicked.connect(self.save_remarks)
+        self.save_remarks_btn.setEnabled(False)
+        set_content_hugging_button(self.save_remarks_btn)
         exp_btn  = QPushButton("Expenses")
         exp_btn.setObjectName("WarningBtn")
         exp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         set_content_hugging_button(exp_btn)
         exp_btn.clicked.connect(self.nav_expenses)
-        remarks_header.addWidget(save_btn)
+        remarks_header.addWidget(self.save_remarks_btn)
         remarks_header.addWidget(exp_btn)
         layout.addLayout(remarks_header)
 
@@ -3071,12 +3471,229 @@ class StudentApp(QMainWindow):
         self.remarks_edit.setFixedHeight(128)
         self.remarks_edit.setObjectName("RemarksEditor")
         self.remarks_edit.setAccessibleName("Student office remarks")
+        self.remarks_edit.textChanged.connect(self._update_remarks_dirty_state)
+        self._loaded_remarks = ""
         layout.addWidget(self.remarks_edit)
 
         scroll.setWidget(content); outer.addWidget(scroll)
         self.stacked_widget.addWidget(widget)
 
     # ── SCREEN 3: ADD / EDIT ──────────────────────────────────────────────────
+    def create_profile_screen(self):
+        """Build the compact student profile approved in Figma."""
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(12)
+
+        top_bar = QHBoxLayout()
+        back_btn = ActionButton("Back to students", variant="secondary")
+        back_btn.clicked.connect(self.nav_students)
+        self.edit_btn = ActionButton("Edit record")
+        self.edit_btn.clicked.connect(self.open_edit_screen)
+        self.deactivate_btn = ActionButton("Mark inactive", widget, variant="tertiary")
+        self.deactivate_btn.clicked.connect(self.toggle_active_status)
+        self.deactivate_btn.hide()
+        self.remove_student_btn = ActionButton("Remove", widget, variant="danger")
+        self.remove_student_btn.clicked.connect(self.remove_current_student)
+        self.remove_student_btn.hide()
+        more_actions = ActionButton("More actions", variant="secondary")
+        profile_menu = QMenu(more_actions)
+        self.profile_change_photo_action = profile_menu.addAction("Change photo")
+        self.profile_change_photo_action.triggered.connect(self.change_photo)
+        self.profile_remove_photo_action = profile_menu.addAction("Remove photo")
+        self.profile_remove_photo_action.triggered.connect(self.remove_photo)
+        self.profile_remove_photo_action.setVisible(False)
+        profile_menu.addSeparator()
+        self.profile_status_action = profile_menu.addAction("Mark inactive")
+        self.profile_status_action.triggered.connect(self.toggle_active_status)
+        self.profile_remove_action = profile_menu.addAction("Remove student")
+        self.profile_remove_action.triggered.connect(self.remove_current_student)
+        more_actions.setMenu(profile_menu)
+        for button in (back_btn, more_actions, self.edit_btn, self.deactivate_btn, self.remove_student_btn):
+            set_content_hugging_button(button, height=38)
+        top_bar.addWidget(back_btn)
+        top_bar.addStretch()
+        top_bar.addWidget(more_actions)
+        top_bar.addWidget(self.edit_btn)
+        outer.addLayout(top_bar)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 6, 12)
+        content_layout.setSpacing(14)
+
+        summary = QFrame()
+        summary.setObjectName("ProfileSummary")
+        summary.setFixedHeight(96)
+        summary_layout = QHBoxLayout(summary)
+        summary_layout.setContentsMargins(0, 14, 18, 14)
+        summary_layout.setSpacing(16)
+        accent = QFrame()
+        accent.setObjectName("ProfileAccent")
+        accent.setFixedWidth(4)
+        self.profile_summary_accent = accent
+        self.profile_summary_accent = accent
+        summary_layout.addWidget(accent)
+
+        self.photo_label = QLabel("Photo")
+        self.photo_label.setObjectName("ProfileAvatar")
+        self.photo_label.setFixedSize(56, 56)
+        self.photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        summary_layout.addWidget(self.photo_label)
+
+        identity = QVBoxLayout()
+        identity.setSpacing(2)
+        self.lbl_profile_name = TitleLabel("Student name")
+        self.lbl_profile_name.setObjectName("ProfileTitle")
+        self.profile_meta_label = QLabel("Area not set  /  Sponsor not set")
+        self.profile_meta_label.setObjectName("Caption")
+        self.lbl_profile_status = QLabel("Active")
+        self.lbl_profile_status.setObjectName("ProfileStatusBadge")
+        self.lbl_profile_status.setFixedHeight(24)
+        self.lbl_profile_status.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        identity.addWidget(self.lbl_profile_name)
+        identity.addWidget(self.profile_meta_label)
+        identity.addWidget(self.lbl_profile_status)
+        summary_layout.addLayout(identity, 1)
+
+        profile_metric = QVBoxLayout()
+        profile_metric.setSpacing(5)
+        profile_label = QLabel("PROFILE")
+        profile_label.setObjectName("UtilityLabel")
+        self.profile_completion_label = StrongBodyLabel("0%")
+        self.profile_progress = QProgressBar()
+        self.profile_progress.setObjectName("ProfileLinearProgress")
+        self.profile_progress.setRange(0, 100)
+        self.profile_progress.setValue(0)
+        self.profile_progress.setTextVisible(False)
+        self.profile_progress.setFixedSize(136, 7)
+        profile_metric.addWidget(profile_label)
+        profile_metric.addWidget(self.profile_completion_label)
+        profile_metric.addWidget(self.profile_progress)
+        summary_layout.addLayout(profile_metric)
+
+        budget_metric = QVBoxLayout()
+        budget_metric.setSpacing(5)
+        budget_label = QLabel("BUDGET")
+        budget_label.setObjectName("UtilityLabel")
+        self.profile_budget_label = QLabel("No budget allocated")
+        self.profile_budget_label.setObjectName("Caption")
+        self.profile_budget_bar = QProgressBar()
+        self.profile_budget_bar.setObjectName("BudgetProgress")
+        self.profile_budget_bar.setRange(0, 100)
+        self.profile_budget_bar.setValue(0)
+        self.profile_budget_bar.setTextVisible(False)
+        self.profile_budget_bar.setFixedSize(184, 7)
+        budget_metric.addWidget(budget_label)
+        budget_metric.addWidget(self.profile_budget_label)
+        budget_metric.addWidget(self.profile_budget_bar)
+        summary_layout.addLayout(budget_metric)
+        content_layout.addWidget(summary)
+
+        self.profile_data_labels = {}
+
+        def info_card(title_text, fields):
+            card = Card()
+            card.setObjectName("ProfileInfoCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 12, 14, 12)
+            card_layout.setSpacing(7)
+            title = StrongBodyLabel(title_text)
+            title.setObjectName("CardHeading")
+            card_layout.addWidget(title)
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(14)
+            grid.setVerticalSpacing(7)
+            grid.setColumnMinimumWidth(0, 104)
+            grid.setColumnStretch(1, 1)
+            for row, (label_text, key) in enumerate(fields):
+                label = QLabel(label_text)
+                label.setObjectName("ProfileFieldLabel")
+                value = QLabel("--")
+                value.setObjectName("ProfileFieldValue")
+                value.setWordWrap(True)
+                value.setMinimumWidth(0)
+                grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop)
+                grid.addWidget(value, row, 1)
+                self.profile_data_labels[key] = value
+            card_layout.addLayout(grid)
+            card_layout.addStretch()
+            return card
+
+        cards = QGridLayout()
+        cards.setHorizontalSpacing(14)
+        cards.setVerticalSpacing(14)
+        student_card = info_card("Student details", (
+            ("Gender", "gender"), ("Grade / year", "grade"),
+            ("Birthday", "birthday"), ("School", "school"),
+            ("Course / track", "course"),
+        ))
+        support_card = info_card("Support details", (
+            ("Status", "support_status"), ("Area", "area"),
+            ("Sponsor", "sponsor"), ("School year", "school_year"),
+        ))
+        contact_card = info_card("Contact and family", (
+            ("Contact", "contact"), ("Parent / guardian", "parents"),
+            ("City", "city"), ("Address", "address"),
+        ))
+
+        notes_card = Card()
+        notes_card.setObjectName("ProfileInfoCard")
+        notes_layout = QVBoxLayout(notes_card)
+        notes_layout.setContentsMargins(14, 12, 14, 12)
+        notes_layout.setSpacing(7)
+        notes_title = StrongBodyLabel("Office notes")
+        notes_title.setObjectName("CardHeading")
+        notes_layout.addWidget(notes_title)
+        self.remarks_edit = QTextEdit()
+        self.remarks_edit.setObjectName("RemarksEditor")
+        self.remarks_edit.setPlaceholderText("Add a concise office note")
+        self.remarks_edit.setFixedHeight(70)
+        self.remarks_edit.textChanged.connect(self._update_remarks_dirty_state)
+        self._loaded_remarks = ""
+        notes_layout.addWidget(self.remarks_edit)
+        action_row = QHBoxLayout()
+        self.save_remarks_btn = ActionButton("Save notes")
+        self.save_remarks_btn.clicked.connect(self.save_remarks)
+        self.save_remarks_btn.setEnabled(False)
+        expense_btn = ActionButton("Expenses", variant="secondary")
+        expense_btn.clicked.connect(self.nav_expenses)
+        self.change_photo_btn = ActionButton("Change photo", widget, variant="tertiary")
+        self.change_photo_btn.clicked.connect(self.change_photo)
+        self.change_photo_btn.hide()
+        self.remove_photo_btn = ActionButton("Remove photo", widget, variant="tertiary")
+        self.remove_photo_btn.clicked.connect(self.remove_photo)
+        self.remove_photo_btn.hide()
+        for button in (
+            self.save_remarks_btn, expense_btn, self.change_photo_btn,
+            self.remove_photo_btn, self.deactivate_btn, self.remove_student_btn,
+        ):
+            set_content_hugging_button(button, height=34)
+        action_row.addWidget(self.save_remarks_btn)
+        action_row.addWidget(expense_btn)
+        action_row.addStretch()
+        notes_layout.addLayout(action_row)
+
+        for card in (student_card, support_card, contact_card, notes_card):
+            card.setMinimumHeight(164)
+        cards.addWidget(student_card, 0, 0)
+        cards.addWidget(support_card, 0, 1)
+        cards.addWidget(contact_card, 1, 0)
+        cards.addWidget(notes_card, 1, 1)
+        cards.setColumnStretch(0, 1)
+        cards.setColumnStretch(1, 1)
+        content_layout.addLayout(cards)
+        content_layout.addStretch()
+
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        self.stacked_widget.addWidget(widget)
+
     def create_add_screen(self):
         widget = QWidget()
         outer = QVBoxLayout(widget)
@@ -3266,26 +3883,15 @@ class StudentApp(QMainWindow):
         layout.setSpacing(16)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Top bar
-        top_bar = QHBoxLayout()
-        back_btn = QPushButton("Back"); back_btn.setObjectName("SecondaryBtn")
-        set_content_hugging_button(back_btn)
-        back_btn.clicked.connect(
-            lambda: (
-                self._set_active_nav(self.btn_stud),
-                self._switch_page(2),
-            )
-        )
-        self.expenses_title = TitleLabel()
-        self.expenses_title.setObjectName("SectionTitle")
-        top_bar.addWidget(back_btn); top_bar.addWidget(self.expenses_title); top_bar.addStretch()
-        layout.addLayout(top_bar)
+        self.expenses_title = StrongBodyLabel("Loading student…")
+        self.expenses_title.setObjectName("ExpenseStudentName")
 
         # School year selector
         sy_card = QFrame()
         sy_card.setObjectName("ExpenseContextBar")
+        sy_card.setFixedHeight(56)
         sy_layout = QHBoxLayout(sy_card)
-        sy_layout.setContentsMargins(0, 2, 0, 12)
+        sy_layout.setContentsMargins(18, 8, 18, 8)
         sy_layout.setSpacing(8)
         sy_lbl = QLabel("School year")
         sy_lbl.setObjectName("FieldLabel")
@@ -3300,13 +3906,19 @@ class StudentApp(QMainWindow):
         if idx >= 0: self.exp_school_year.setCurrentIndex(idx)
         self.exp_school_year.currentTextChanged.connect(self._on_sy_changed)
         self.exp_school_year.setMinimumWidth(150)
+        sy_layout.addWidget(self.expenses_title)
+        sy_layout.addStretch()
         sy_layout.addWidget(sy_lbl)
         sy_layout.addWidget(self.exp_school_year)
-        sy_layout.addStretch()
+        sync_label = QLabel("Synchronized")
+        sync_label.setObjectName("BudgetStatus")
+        sy_layout.addWidget(sync_label)
         layout.addWidget(sy_card)
 
         # ── Budget card ────────────────────────────────────────────────────
         budget_card = Card()
+        budget_card.setProperty("tone", "success")
+        budget_card.setFixedHeight(150)
         budget_main = QVBoxLayout(budget_card)
         budget_main.setContentsMargins(16, 16, 16, 16)
         budget_main.setSpacing(8)
@@ -3322,21 +3934,37 @@ class StudentApp(QMainWindow):
         self.budget_input.setPlaceholderText("Enter budget e.g. 5000")
         self.budget_input.setMaximumWidth(200)
         self.budget_input.setMinimumHeight(40)
-        save_budget_btn = PrimaryPushButton("Save budget")
-        set_content_hugging_button(save_budget_btn)
-        save_budget_btn.clicked.connect(self.save_budget)
+        self.budget_input.setAccessibleName("Budget amount in Philippine pesos")
+        self.save_budget_btn = PrimaryPushButton("Save budget")
+        set_content_hugging_button(self.save_budget_btn)
+        self.save_budget_btn.clicked.connect(self.save_budget)
         budget_hdr.addWidget(self.budget_input)
-        budget_hdr.addWidget(save_budget_btn)
+        budget_hdr.addWidget(self.save_budget_btn)
         budget_main.addLayout(budget_hdr)
+
+        budget_figures = QHBoxLayout()
+        self.expense_budget_amount_display = QLabel("PHP 0.00")
+        self.expense_budget_amount_display.setObjectName("DashboardHeroValue")
+        self.expense_spent_display = StrongBodyLabel("PHP 0.00 spent")
+        self.expense_remaining_display = QLabel("PHP 0.00 remaining")
+        self.expense_remaining_display.setObjectName("Caption")
+        budget_figures.addWidget(self.expense_budget_amount_display)
+        budget_figures.addSpacing(28)
+        budget_figures.addWidget(self.expense_spent_display)
+        budget_figures.addStretch()
+        budget_figures.addWidget(self.expense_remaining_display)
+        budget_main.addLayout(budget_figures)
 
         # Progress bar row
         self.budget_bar = QProgressBar()
         self.budget_bar.setRange(0, 100)
         self.budget_bar.setValue(0)
         self.budget_bar.setTextVisible(False)
-        self.budget_bar.setFixedHeight(10)
+        self.budget_bar.setFixedHeight(9)
         self.budget_bar.setObjectName("BudgetProgress")
         self.budget_bar.setProperty("state", "success")
+        self.budget_bar.setAccessibleName("Budget usage")
+        self.budget_bar.setAccessibleDescription("No budget usage loaded")
         budget_main.addWidget(self.budget_bar)
 
         self.budget_status_lbl = QLabel("No budget allocated for this school year.")
@@ -3372,9 +4000,9 @@ class StudentApp(QMainWindow):
         self.exp_sy_entry.addItems(sy_list)
         if idx >= 1: self.exp_sy_entry.setCurrentIndex(idx - 1)
         self.exp_sy_entry.setMinimumHeight(40)
-        add_exp_btn = PrimaryPushButton("Add expense")
-        set_content_hugging_button(add_exp_btn)
-        add_exp_btn.clicked.connect(self.add_expense)
+        self.add_expense_btn = PrimaryPushButton("Add expense")
+        set_content_hugging_button(self.add_expense_btn)
+        self.add_expense_btn.clicked.connect(self.add_expense)
         description_label = QLabel("Description")
         description_label.setObjectName("FieldLabel")
         amount_label = QLabel("Amount (PHP)")
@@ -3391,7 +4019,7 @@ class StudentApp(QMainWindow):
         add_grid.addWidget(entry_year_label, 2, 1)
         add_grid.addWidget(self.exp_date, 3, 0)
         add_grid.addWidget(self.exp_sy_entry, 3, 1)
-        add_grid.addWidget(add_exp_btn, 3, 2)
+        add_grid.addWidget(self.add_expense_btn, 3, 2)
         add_grid.setColumnStretch(0, 2)
         add_grid.setColumnStretch(1, 1)
         add_grid.setColumnStretch(2, 1)
@@ -3408,6 +4036,7 @@ class StudentApp(QMainWindow):
         expense_history_title.setObjectName("CardHeading")
         self.total_label = QLabel("Total: PHP 0.00")
         self.total_label.setObjectName("TotalLabel")
+        self.total_label.setAccessibleName("Expense total")
         history_header.addWidget(expense_history_title)
         history_header.addStretch()
         history_header.addWidget(self.total_label)
@@ -3455,6 +4084,10 @@ class StudentApp(QMainWindow):
 
         controls_card = CardWidget()
         controls_card.setObjectName("CoordinatorToolbar")
+        controls_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
         controls_layout = QVBoxLayout(controls_card)
         controls_layout.setContentsMargins(12, 12, 12, 12)
         controls_layout.setSpacing(8)
@@ -3471,18 +4104,18 @@ class StudentApp(QMainWindow):
         self.coord_search.setClearButtonEnabled(True)
         self.coord_search.setMinimumWidth(280)
         self.coord_search.textChanged.connect(self._filter_coordinators)
-        add_coord_btn = PrimaryPushButton("Add coordinator")
-        set_content_hugging_button(add_coord_btn)
-        add_coord_btn.clicked.connect(self._add_coordinator_dialog)
-        refresh_coord_btn = QPushButton("Refresh")
-        refresh_coord_btn.setObjectName("SecondaryBtn")
-        set_content_hugging_button(refresh_coord_btn)
-        refresh_coord_btn.clicked.connect(self.load_coordinators)
+        self.add_coordinator_btn = PrimaryPushButton("Add coordinator")
+        set_content_hugging_button(self.add_coordinator_btn)
+        self.add_coordinator_btn.clicked.connect(self._add_coordinator_dialog)
+        self.refresh_coordinator_btn = QPushButton("Refresh")
+        self.refresh_coordinator_btn.setObjectName("SecondaryBtn")
+        set_content_hugging_button(self.refresh_coordinator_btn)
+        self.refresh_coordinator_btn.clicked.connect(self.load_coordinators)
         top_bar.addWidget(title)
         top_bar.addWidget(self.coord_status)
         top_bar.addStretch()
-        top_bar.addWidget(add_coord_btn)
-        top_bar.addWidget(refresh_coord_btn)
+        top_bar.addWidget(self.add_coordinator_btn)
+        top_bar.addWidget(self.refresh_coordinator_btn)
         controls_layout.addLayout(top_bar)
 
         search_row = QHBoxLayout()
@@ -3532,7 +4165,8 @@ class StudentApp(QMainWindow):
         self.coord_results_stack.addWidget(self.coord_empty_state)
         self.coord_results_stack.setCurrentWidget(self.coord_empty_state)
         table_layout.addWidget(self.coord_results_stack, 1)
-        layout.addWidget(self.coord_table_card, 1)
+        layout.addWidget(self.coord_table_card)
+        layout.addStretch(1)
 
         self._coord_all_rows = []  # cache for filtering
         self.stacked_widget.addWidget(widget)
@@ -3542,13 +4176,31 @@ class StudentApp(QMainWindow):
         self.stacked_widget.addWidget(self.settings_view)
 
     def load_coordinators(self):
-        try:
-            data = self.coordinator_repository.list_coordinators()
+        self._coordinator_request += 1
+        request_id = self._coordinator_request
+        self.coord_status.setText("Loading…")
+        self.refresh_coordinator_btn.setEnabled(False)
+        self.refresh_coordinator_btn.setText("Refreshing…")
+        if not self._coord_all_rows:
+            self.coord_empty_state.title_label.setText("Loading directory…")
+            self.coord_empty_state.description_label.setText(
+                "Retrieving the shared coordinator records."
+            )
+            self.coord_empty_action.setVisible(False)
+            self.coord_results_stack.setCurrentWidget(self.coord_empty_state)
+
+        def loaded(data):
+            if request_id != self._coordinator_request:
+                return
             self._coord_all_rows = data
             self._populate_coord_table(data)
             self._mark_database_updated()
-        except Exception as e:
-            self.coord_status.setText(f"Could not load coordinators: {e}")
+            self._finish_coordinator_refresh(request_id)
+
+        def failed(error):
+            if request_id != self._coordinator_request:
+                return
+            self.coord_status.setText("Unavailable")
             self.coord_empty_state.title_label.setText("Coordinator directory unavailable")
             self.coord_empty_state.description_label.setText(
                 "Check the office database connection, then try again."
@@ -3557,16 +4209,44 @@ class StudentApp(QMainWindow):
             self.coord_empty_action.setProperty("mode", "retry")
             self.coord_results_stack.setCurrentWidget(self.coord_empty_state)
             self._set_coordinator_results_expanded(False)
+            self.coord_empty_action.setVisible(True)
+            self._finish_coordinator_refresh(request_id)
+            logging.getLogger(__name__).error(
+                "Coordinator load failed:\n%s", error
+            )
+
+        task = self._run_background(
+            self.coordinator_repository.list_coordinators,
+            loaded,
+            failed,
+        )
+        return task
+
+    def _finish_coordinator_refresh(self, request_id) -> None:
+        if request_id != self._coordinator_request:
+            return
+        self.refresh_coordinator_btn.setEnabled(True)
+        self.refresh_coordinator_btn.setText("Refresh")
 
     def _set_coordinator_results_expanded(self, has_rows):
-        self.coord_table_card.setMaximumHeight(16777215 if has_rows else 360)
+        if has_rows:
+            content_height = self.coord_table.horizontalHeader().sizeHint().height() + 30
+            content_height += sum(
+                self.coord_table.rowHeight(row)
+                for row in range(self.coord_table.rowCount())
+            )
+            target_height = max(160, min(content_height, 520))
+        else:
+            target_height = 360
+        self.coord_table_card.setMaximumHeight(target_height)
         self.coord_table_card.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding if has_rows else QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Maximum,
         )
         self.coord_table_card.updateGeometry()
 
     def _populate_coord_table(self, rows):
+        self.coord_empty_action.setVisible(True)
         self.coord_table.setRowCount(0)
         for r in rows:
             row_idx = self.coord_table.rowCount()
@@ -3669,13 +4349,16 @@ class StudentApp(QMainWindow):
             return
         record = {k: v.text().strip() for k, v in fields.items()}
         if not record["location"] and not record["contact_person"]:
+            self.status_bar.showMessage(
+                "Enter a location or contact person before saving.", 5000
+            )
             return
-        try:
-            self.coordinator_repository.insert_coordinator(record)
-            self.load_coordinators()
-            self.status_bar.showMessage("Coordinator added", 4000)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+        self._run_coordinator_mutation(
+            lambda: self.coordinator_repository.insert_coordinator(record),
+            success_message="Coordinator added",
+            audit_action="create",
+            audit_details={"location": record["location"]},
+        )
 
     def _edit_coordinator_dialog(self, index):
         row = index.row()
@@ -3695,22 +4378,74 @@ class StudentApp(QMainWindow):
         result = dlg.exec()
         if result == QDialog.DialogCode.Accepted and rec_id:
             record = {k: v.text().strip() for k, v in fields.items()}
-            try:
-                self.coordinator_repository.update_coordinator(rec_id, record)
-                self.load_coordinators()
-                self.status_bar.showMessage("Coordinator updated", 4000)
-            except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+            self._run_coordinator_mutation(
+                lambda: self.coordinator_repository.update_coordinator(rec_id, record),
+                success_message="Coordinator updated",
+                audit_action="update",
+                entity_id=rec_id,
+                audit_details={"location": record["location"]},
+            )
         elif result == 2 and rec_id:
-            confirm = QMessageBox.question(self, "Delete", "Delete this coordinator?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            confirm = QMessageBox.question(
+                self,
+                "Delete coordinator",
+                "Delete this coordinator from the shared directory?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
             if confirm == QMessageBox.StandardButton.Yes:
-                try:
-                    self.coordinator_repository.delete_coordinator(rec_id)
-                    self.load_coordinators()
-                    self.status_bar.showMessage("Coordinator deleted", 4000)
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", str(e))
+                self._run_coordinator_mutation(
+                    lambda: self.coordinator_repository.delete_coordinator(rec_id),
+                    success_message="Coordinator deleted",
+                    audit_action="delete",
+                    entity_id=rec_id,
+                    audit_details={"location": prefill.get("location", "")},
+                )
+
+    def _run_coordinator_mutation(
+        self,
+        function,
+        *,
+        success_message,
+        audit_action,
+        entity_id=None,
+        audit_details=None,
+    ):
+        """Run coordinator writes without freezing navigation or input."""
+        self.add_coordinator_btn.setEnabled(False)
+        self.refresh_coordinator_btn.setEnabled(False)
+        self.coord_table.setEnabled(False)
+        self.coord_status.setText("Saving…")
+
+        def succeeded(result):
+            saved_id = entity_id
+            if saved_id is None and result:
+                saved_id = result[0].get("id")
+            self.add_coordinator_btn.setEnabled(True)
+            self.coord_table.setEnabled(True)
+            self._audit(
+                audit_action,
+                "coordinator",
+                saved_id,
+                audit_details,
+            )
+            self.load_coordinators()
+            self.status_bar.showMessage(success_message, 4000)
+
+        def failed(error):
+            self.add_coordinator_btn.setEnabled(True)
+            self.refresh_coordinator_btn.setEnabled(True)
+            self.coord_table.setEnabled(True)
+            self.coord_status.setText("Save failed")
+            self.status_bar.showMessage(
+                "Could not save the coordinator. Check the office connection and try again.",
+                8000,
+            )
+            logging.getLogger(__name__).error(
+                "Coordinator mutation failed:\n%s", error
+            )
+
+        return self._run_background(function, succeeded, failed)
 
     def create_workbook_screen(self):
         widget = QWidget()
@@ -4536,24 +5271,98 @@ class StudentApp(QMainWindow):
     def _sheet_year_score(self, sheet_name):
         return self.masterlist_service.sheet_year_score(sheet_name)
     def _load_profile(self, sid):
-        try:
+        """Load a profile off the UI thread and ignore stale responses."""
+        self._profile_request += 1
+        request_id = self._profile_request
+        self.lbl_profile_name.setText("Loading profile…")
+        self.lbl_profile_status.setText("Fetching student record")
+        self.profile_progress.setValue(0)
+        self.profile_completion_label.setText("0%")
+        self.profile_budget_label.setText("Loading budget…")
+        self.profile_budget_bar.setValue(0)
+        self.remarks_edit.setEnabled(False)
+        self.save_remarks_btn.setEnabled(False)
+        for button in (
+            self.edit_btn,
+            self.deactivate_btn,
+            self.remove_student_btn,
+            self.change_photo_btn,
+            self.remove_photo_btn,
+        ):
+            button.setEnabled(False)
+        for action in (
+            self.profile_change_photo_action,
+            self.profile_remove_photo_action,
+            self.profile_status_action,
+            self.profile_remove_action,
+        ):
+            action.setEnabled(False)
+
+        def fetch():
             student = self.student_repository.get_student_single(sid)
-            s = self._apply_current_master_status(student)
+            student = self._apply_current_master_status(student)
+            summary = self.expense_service.get_financial_summary(
+                sid, self._current_school_year()
+            )
+            return student, summary
+
+        def loaded(result):
+            if request_id != self._profile_request or sid != self.current_student_id:
+                return
+            student, summary = result
+            self._apply_profile(student, summary)
+            self._loaded_remarks = self.remarks_edit.toPlainText()
+            self.remarks_edit.setEnabled(True)
+            self._update_remarks_dirty_state()
+            self.edit_btn.setEnabled(True)
+            self.remove_student_btn.setEnabled(True)
+            self.change_photo_btn.setEnabled(True)
+            for action in (
+                self.profile_change_photo_action,
+                self.profile_remove_photo_action,
+                self.profile_status_action,
+                self.profile_remove_action,
+            ):
+                action.setEnabled(True)
+            self.lbl_profile_name.setAccessibleDescription(
+                f"Student profile for {self.lbl_profile_name.text()}"
+            )
+            self.status_bar.showMessage("Student profile updated", 2500)
+
+        def failed(error):
+            if request_id != self._profile_request or sid != self.current_student_id:
+                return
+            self.lbl_profile_name.setText("Profile unavailable")
+            self.lbl_profile_status.setText("Could not load student record")
+            self.remarks_edit.setEnabled(False)
+            self.status_bar.showMessage(
+                "Could not load this profile. Check the office connection and refresh.",
+                8000,
+            )
+            logging.getLogger(__name__).error("Profile load failed:\n%s", error)
+
+        return self._run_background(fetch, loaded, failed)
+
+    def _apply_profile(self, s, financial_summary=None):
+        try:
             full_status, short_status, _status_token = self._status_style(s.get("status"))
             inactive = (full_status != "Active")
             
             # 1. Update Buttons and Status
             master_status = s.get("_status_source") == "masterlist"
-            self.deactivate_btn.setVisible(not master_status)
+            self.deactivate_btn.hide()
+            self.profile_status_action.setEnabled(not master_status)
             self.deactivate_btn.setEnabled(True)
             self.deactivate_btn.setToolTip("")
             if inactive:
                 self.deactivate_btn.setText("Mark active")
+                self.profile_status_action.setText("Mark active")
                 self.deactivate_btn.setObjectName("SuccessBtn")
                 self.deactivate_btn.style().unpolish(self.deactivate_btn)
                 self.deactivate_btn.style().polish(self.deactivate_btn)
             else:
                 self.deactivate_btn.setText("Mark inactive")
+                self.profile_status_action.setText("Mark inactive")
                 self.deactivate_btn.setObjectName("WarningBtn")
                 self.deactivate_btn.style().unpolish(self.deactivate_btn)
                 self.deactivate_btn.style().polish(self.deactivate_btn)
@@ -4562,20 +5371,24 @@ class StudentApp(QMainWindow):
                 "Inactive/Removed": "inactive",
                 "Graduated": "graduated",
             }.get(full_status, "inactive")
-            self.lbl_profile_status.setText(f"●  {full_status}")
+            self.lbl_profile_status.setText(full_status)
             self.lbl_profile_status.setProperty("status", status_key)
-            status_color = self._profile_status_color(status_key)
-            self.lbl_profile_status.setStyleSheet(
-                "color: "
-                f"rgba({status_color.red()}, {status_color.green()}, "
-                f"{status_color.blue()}, {status_color.alpha()}); "
-                "background: transparent; font-size: 15px; font-weight: 700;"
-            )
+            self.lbl_profile_status.setStyleSheet("")
+            self.profile_summary_accent.setProperty("status", status_key)
+            self.profile_summary_accent.style().unpolish(self.profile_summary_accent)
+            self.profile_summary_accent.style().polish(self.profile_summary_accent)
+            self.profile_summary_accent.setProperty("status", status_key)
+            self.profile_summary_accent.style().unpolish(self.profile_summary_accent)
+            self.profile_summary_accent.style().polish(self.profile_summary_accent)
             self.lbl_profile_status.style().unpolish(self.lbl_profile_status)
             self.lbl_profile_status.style().polish(self.lbl_profile_status)
 
             # 2. Update Header Name
             self.lbl_profile_name.setText(f"{s.get('last_name', '')}, {s.get('first_name', '')}")
+            self.profile_meta_label.setText(
+                f"{s.get('area') or 'Area not set'}  /  "
+                f"{s.get('sponsor') or 'Sponsor not set'}"
+            )
 
             # 3. Safely update all grid labels
             fields = [
@@ -4589,14 +5402,50 @@ class StudentApp(QMainWindow):
                 # Ensure we handle None or empty strings gracefully
                 display_text = str(val).strip() if val and str(val).strip() else "--"
                 self.profile_data_labels[field].setText(display_text)
+                self.profile_data_labels[field].setAccessibleDescription(
+                    f"{field.replace('_', ' ').title()}: {display_text}"
+                )
+            self.profile_data_labels["support_status"].setText(full_status)
+            self.profile_data_labels["school_year"].setText(
+                self._current_school_year()
+            )
 
             self.remarks_edit.setPlainText(s.get("remarks") or "")
 
             photo_url = s.get("photo_url")
             self._load_photo_from_url(self.photo_label, photo_url)
-            self.remove_photo_btn.setVisible(bool(photo_url))
+            self.remove_photo_btn.hide()
+            self.profile_remove_photo_action.setVisible(bool(photo_url))
+            if not photo_url:
+                initials = "".join(
+                    part[:1].upper()
+                    for part in (s.get("first_name"), s.get("last_name"))
+                    if str(part or "").strip()
+                )[:2]
+                self.photo_label.setText(initials or "SSM")
 
-            self.profile_progress.set_value(self._profile_completion_percent(s))
+            completion = self._profile_completion_percent(s)
+            self.profile_completion_label.setText(f"{completion}%")
+            animate_progress(
+                self.profile_progress,
+                completion,
+                motion_enabled=not self._reduce_motion,
+            )
+
+            budget = self.expense_service.budget_card_status(financial_summary)
+            self.profile_budget_label.setText(
+                budget.get("detail") or budget.get("title") or "No budget allocated"
+            )
+            self.profile_budget_bar.setProperty(
+                "state", budget.get("state", "neutral")
+            )
+            self.profile_budget_bar.style().unpolish(self.profile_budget_bar)
+            self.profile_budget_bar.style().polish(self.profile_budget_bar)
+            animate_progress(
+                self.profile_budget_bar,
+                budget.get("percent", 0),
+                motion_enabled=not self._reduce_motion,
+            )
 
         except Exception as e:
             self.status_bar.showMessage(f"Load error ({type(e).__name__}): {e}", 8000)
@@ -4767,51 +5616,115 @@ class StudentApp(QMainWindow):
             self._set_photo_local(self.add_photo_label, path)
 
     # ── REMARKS ───────────────────────────────────────────────────────────────
+    def _update_remarks_dirty_state(self) -> None:
+        button = getattr(self, "save_remarks_btn", None)
+        if button is None:
+            return
+        dirty = bool(self.current_student_id) and (
+            self.remarks_edit.toPlainText() != getattr(self, "_loaded_remarks", "")
+        )
+        button.setEnabled(dirty and self.remarks_edit.isEnabled())
+        button.setText("Save remarks")
+        button.setAccessibleDescription(
+            "Save changed student remarks" if dirty else "No unsaved remark changes"
+        )
+
     def save_remarks(self):
-        if not self.current_student_id: return
-        self._update_field("students", "remarks", self.remarks_edit.toPlainText(), self.current_student_id)
+        if not self.current_student_id:
+            return
+        student_id = self.current_student_id
+        value = self.remarks_edit.toPlainText()
+        self.save_remarks_btn.setEnabled(False)
+        self.save_remarks_btn.setText("Saving…")
+
+        def saved(_result):
+            if student_id != self.current_student_id:
+                return
+            self._loaded_remarks = value
+            self._update_remarks_dirty_state()
+            self._audit("update_remarks", "student", student_id)
+            self.status_bar.showMessage("Remarks saved", 3000)
+
+        def failed(error):
+            if student_id == self.current_student_id:
+                self.save_remarks_btn.setText("Save remarks")
+                self._update_remarks_dirty_state()
+            self.status_bar.showMessage(
+                "Could not save remarks. Check the office connection and try again.",
+                8000,
+            )
+            logging.getLogger(__name__).error("Remark save failed:\n%s", error)
+
+        return self._run_background(
+            lambda: self.student_repository.update_student(
+                student_id,
+                {"remarks": value},
+            ),
+            saved,
+            failed,
+        )
 
     # ── TOGGLE STATUS ─────────────────────────────────────────────────────────
     def toggle_active_status(self):
-        if not self.current_student_id: return
-        try:
-            student = self.student_repository.get_student_single(self.current_student_id)
+        if not self.current_student_id:
+            return
+        student_id = self.current_student_id
+        original_text = self.deactivate_btn.text()
+        self.deactivate_btn.setEnabled(False)
+        self.deactivate_btn.setText("Updating…")
+
+        def update():
+            student = self.student_repository.get_student_single(student_id)
             current = self._apply_current_master_status(student).get("status")
             new_status = "Active" if current == "Inactive/Removed" else "Inactive/Removed"
-            self.student_repository.update_status(self.current_student_id, new_status)
+            self.student_repository.update_status(student_id, new_status)
+            return new_status
+
+        def updated(new_status):
+            if student_id != self.current_student_id:
+                return
             self._audit(
-                "status_change", "student", self.current_student_id,
+                "status_change", "student", student_id,
                 {"status": new_status},
             )
-            self._load_profile(self.current_student_id)
+            self._load_profile(student_id)
             self.status_bar.showMessage(f"Status set to {new_status}", 3000)
             self._on_students_changed()
-        except Exception as e:
-            self.status_bar.showMessage(f"Status update error ({type(e).__name__}): {e}", 8000)
+
+        def failed(error):
+            if student_id == self.current_student_id:
+                self.deactivate_btn.setEnabled(True)
+                self.deactivate_btn.setText(original_text)
+            self.status_bar.showMessage(
+                "Could not update the student status. Check the office connection and try again.",
+                8000,
+            )
+            logging.getLogger(__name__).error(
+                "Student status update failed:\n%s", error
+            )
+
+        return self._run_background(update, updated, failed)
 
     # ── ADD / EDIT FORM ───────────────────────────────────────────────────────
     def remove_current_student(self):
         if not self.current_student_id:
             return
-        try:
-            student = self.student_repository.get_student_single(
-                self.current_student_id,
-                columns="last_name,first_name",
-            )
-        except Exception as e:
-            self.status_bar.showMessage(f"Load error ({type(e).__name__}): {e}", 8000)
-            return
-
-        name = f"{student.get('last_name', '')}, {student.get('first_name', '')}".strip(", ")
+        displayed_name = self.lbl_profile_name.text().strip()
+        name = (
+            displayed_name
+            if displayed_name not in {"", "Loading profile…", "Profile unavailable"}
+            else "this student"
+        )
         confirm = QMessageBox.question(
             self,
             "Remove student",
             (
-                f"Remove {name or 'this student'}?\n\n"
+                f"Remove {name}?\n\n"
                 "This will permanently delete the student record and related "
                 "expenses, budgets, donor links, and movement entries."
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
@@ -4820,7 +5733,7 @@ class StudentApp(QMainWindow):
             self,
             "Remove this student?",
             (
-                f"Are you sure you want to permanently remove {name or 'this student'}?\n\n"
+                f"Are you sure you want to permanently remove {name}?\n\n"
                 "This deletes the live Supabase data for everyone using the system."
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -4839,14 +5752,20 @@ class StudentApp(QMainWindow):
             if not deleted:
                 self.status_bar.showMessage("Student was not found or was already removed.", 5000)
             else:
-                self.status_bar.showMessage(f"Removed {name or 'student'}.", 5000)
+                self.status_bar.showMessage(f"Removed {name}.", 5000)
             self._audit("delete", "student", student_id, details={"name": name})
             self.current_student_id = None
             self._on_students_changed()
             self.nav_students()
 
         def failed(error):
-            self.status_bar.showMessage(f"Remove failed: {error.strip().splitlines()[-1]}", 8000)
+            self.status_bar.showMessage(
+                "Could not remove the student. Check the office connection and try again.",
+                8000,
+            )
+            logging.getLogger(__name__).error(
+                "Student removal failed:\n%s", error
+            )
 
         self._run_background(remove, removed, failed)
 
@@ -4855,10 +5774,45 @@ class StudentApp(QMainWindow):
         self._switch_page(3)
 
     def open_edit_screen(self):
-        if not self.current_student_id: return
+        if not self.current_student_id:
+            return
+        student_id = self.current_student_id
+        self._student_form_request += 1
+        request_id = self._student_form_request
+        self._editing_id = student_id
+        self.form_title_label.setText("Loading student record…")
+        self.save_form_btn.setEnabled(False)
+        self._switch_page(3)
+
+        def fetch():
+            student = self.student_repository.get_student_single(student_id)
+            return student, self._apply_current_master_status(student)
+
+        def loaded(result):
+            if (
+                request_id != self._student_form_request
+                or student_id != self.current_student_id
+                or self.stacked_widget.currentIndex() != 3
+            ):
+                return
+            student, resolved = result
+            self._apply_student_form(student, resolved)
+            self.save_form_btn.setEnabled(True)
+
+        def failed(error):
+            if request_id != self._student_form_request:
+                return
+            self.save_form_btn.setEnabled(True)
+            self.status_bar.showMessage(
+                "Could not load this student for editing. Refresh the profile and try again.",
+                8000,
+            )
+            logging.getLogger(__name__).error("Edit form load failed:\n%s", error)
+
+        return self._run_background(fetch, loaded, failed)
+
+    def _apply_student_form(self, student, s):
         try:
-            student = self.student_repository.get_student_single(self.current_student_id)
-            s = self._apply_current_master_status(student)
             self.form_title_label.setText("Edit student record")
             self._editing_id = self.current_student_id
             self._editing_snapshot = {
@@ -5027,15 +5981,42 @@ class StudentApp(QMainWindow):
     def open_expenses_screen(self):
         if not self.current_student_id:
             return
-        try:
-            s = self.student_repository.get_student_single(self.current_student_id, columns="last_name,first_name")
-            self.expenses_title.setText(
-                f"Expenses \u2014 {s['last_name']}, {s['first_name']}"
+        student_id = self.current_student_id
+        self.expenses_title.setText("Loading student…")
+        self.expenses_title.setAccessibleDescription(
+            "Loading the selected student's expense records"
+        )
+        self.expenses_table.setRowCount(0)
+        self._switch_page(4)
+        self._refresh_expenses_view()
+
+        def loaded(student):
+            if student_id != self.current_student_id:
+                return
+            display_name = (
+                f"{student.get('last_name', '')}, {student.get('first_name', '')}"
+            ).strip(", ")
+            self.expenses_title.setText(display_name or "Student")
+            self.expenses_title.setAccessibleDescription(
+                f"Expense records for {display_name or 'the selected student'}"
             )
-            self._refresh_expenses_view()
-            self._switch_page(4)
-        except Exception as e:
-            self.status_bar.showMessage(f"Error ({type(e).__name__}): {e}", 8000)
+
+        def failed(error):
+            if student_id != self.current_student_id:
+                return
+            self.expenses_title.setText("Expenses")
+            logging.getLogger(__name__).error(
+                "Expense student heading failed:\n%s", error
+            )
+
+        return self._run_background(
+            lambda: self.student_repository.get_student_single(
+                student_id,
+                columns="last_name,first_name",
+            ),
+            loaded,
+            failed,
+        )
 
     def _on_sy_changed(self):
         """Called when school year filter changes; reload expenses and budget."""
@@ -5050,20 +6031,51 @@ class StudentApp(QMainWindow):
         if not self.current_student_id:
             return
 
-        self.expenses_table.setRowCount(0)
+        self._expense_request += 1
+        request_id = self._expense_request
+        student_id = self.current_student_id
         sy_filter = self.exp_school_year.currentText()
+        self.expenses_table.setRowCount(0)
+        self.expenses_empty_state.title_label.setText("Updating expense history…")
+        self.expenses_empty_state.description_label.setText(
+            "Retrieving synchronized budget and expense figures."
+        )
+        self.expenses_empty_state.setAccessibleName("Updating expense history")
+        self.expense_history_stack.setCurrentWidget(self.expenses_empty_state)
+        self.total_label.setText("Total: Updating…")
+        self.budget_status_lbl.setText("Updating synchronized figures…")
+        self.budget_input.setEnabled(False)
+        self.save_budget_btn.setEnabled(False)
+        self.add_expense_btn.setEnabled(False)
 
         def do_work():
-            summary = self.expense_service.get_financial_summary(self.current_student_id, sy_filter)
-            expenses = self.expense_service.list_expenses(self.current_student_id, sy_filter)
-            return summary, expenses
+            summary = self.expense_service.get_financial_summary(student_id, sy_filter)
+            expenses = self.expense_service.list_expenses(student_id, sy_filter)
+            return (
+                self.expense_service.reconcile_summary(
+                    summary,
+                    expenses,
+                    sy_filter,
+                ),
+                expenses,
+            )
 
         def on_done(result):
+            if (
+                request_id != self._expense_request
+                or student_id != self.current_student_id
+                or sy_filter != self.exp_school_year.currentText()
+            ):
+                return
             summary_data, expenses_data = result
 
             # Update budget display
             budget_info = self.expense_service.budget_usage(summary_data)
-            self.budget_bar.setValue(budget_info["percent"])
+            animate_progress(
+                self.budget_bar,
+                budget_info["percent"],
+                motion_enabled=not self._reduce_motion,
+            )
             self.budget_bar.setProperty("state", budget_info["state"])
             self.budget_bar.style().unpolish(self.budget_bar)
             self.budget_bar.style().polish(self.budget_bar)
@@ -5072,12 +6084,34 @@ class StudentApp(QMainWindow):
             self.budget_status_lbl.style().unpolish(self.budget_status_lbl)
             self.budget_status_lbl.style().polish(self.budget_status_lbl)
             budget_amount = budget_info.get("budget", 0)
+            self.expense_budget_amount_display.setText(
+                f"PHP {budget_amount:,.2f}"
+            )
+            self.expense_spent_display.setText(
+                f"PHP {budget_info.get('spent', 0):,.2f} spent"
+            )
+            self.expense_remaining_display.setText(
+                f"PHP {budget_info.get('remaining', 0):,.2f} remaining"
+            )
             self.budget_input.setText(f"{budget_amount:,.2f}" if budget_amount > 0 else "")
-            self.budget_input.setEnabled(sy_filter != ExpenseService.ALL_YEARS)
+            can_edit_budget = sy_filter != ExpenseService.ALL_YEARS
+            self.budget_input.setEnabled(can_edit_budget)
+            self.save_budget_btn.setEnabled(can_edit_budget)
+            self.save_budget_btn.setText("Save budget")
+            self.add_expense_btn.setEnabled(True)
+            self.add_expense_btn.setText("Add expense")
+            self.budget_bar.setAccessibleDescription(
+                f"{budget_info['percent']} percent used. {budget_info['message']}"
+            )
 
             # Populate expenses table
             for exp in expenses_data:
                 self._add_expense_to_table(exp)
+            self.expenses_empty_state.title_label.setText("No expenses recorded")
+            self.expenses_empty_state.description_label.setText(
+                "Add the first expense for this school year using the form above."
+            )
+            self.expenses_empty_state.setAccessibleName("No expenses recorded")
             self.expense_history_stack.setCurrentWidget(
                 self.expenses_table if expenses_data else self.expenses_empty_state
             )
@@ -5085,19 +6119,56 @@ class StudentApp(QMainWindow):
             # Update total label
             total = self.expense_service.calculate_total(expenses_data)
             self.total_label.setText(self.expense_service.total_label(total, sy_filter))
+            self.total_label.setAccessibleDescription(
+                f"Synchronized total is PHP {total:,.2f} for {sy_filter}"
+            )
+            self._mark_database_updated()
 
         def on_error(error):
-            self.status_bar.showMessage(f"Load error ({type(error).__name__}): {error}", 8000)
+            if (
+                request_id != self._expense_request
+                or student_id != self.current_student_id
+                or sy_filter != self.exp_school_year.currentText()
+            ):
+                return
+            can_edit_budget = sy_filter != ExpenseService.ALL_YEARS
+            self.budget_input.setEnabled(can_edit_budget)
+            self.save_budget_btn.setEnabled(can_edit_budget)
+            self.add_expense_btn.setEnabled(True)
+            self.save_budget_btn.setText("Save budget")
+            self.add_expense_btn.setText("Add expense")
+            self.total_label.setText("Total unavailable")
+            self.budget_status_lbl.setText("Budget figures unavailable")
+            self.expenses_empty_state.title_label.setText("Expense history unavailable")
+            self.expenses_empty_state.description_label.setText(
+                "Check the office database connection, then refresh this view."
+            )
+            self.expenses_empty_state.setAccessibleName("Expense history unavailable")
+            self.expense_history_stack.setCurrentWidget(self.expenses_empty_state)
+            self.status_bar.showMessage(
+                "Could not load expenses. Check the office connection and refresh.",
+                8000,
+            )
+            logging.getLogger(__name__).error(
+                "Expense refresh failed:\n%s", error
+            )
 
-        self._run_background(do_work, on_done, on_error)
+        return self._run_background(do_work, on_done, on_error)
 
     def _add_expense_to_table(self, exp):
         row_idx = self.expenses_table.rowCount()
         self.expenses_table.insertRow(row_idx)
         self.expenses_table.setRowHeight(row_idx, 40)
-        self.expenses_table.setItem(row_idx, 0, QTableWidgetItem(exp.get("description", "")))
+        description_item = QTableWidgetItem(exp.get("description", ""))
+        description_item.setToolTip(description_item.text())
+        self.expenses_table.setItem(row_idx, 0, description_item)
         amount = exp.get("amount", 0) or 0
-        self.expenses_table.setItem(row_idx, 1, QTableWidgetItem(f"{amount:,.2f}"))
+        amount_item = QTableWidgetItem(f"{amount:,.2f}")
+        amount_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        amount_item.setToolTip(f"PHP {amount:,.2f}")
+        self.expenses_table.setItem(row_idx, 1, amount_item)
         self.expenses_table.setItem(row_idx, 2, QTableWidgetItem(exp.get("date") or ""))
         self.expenses_table.setItem(row_idx, 3, QTableWidgetItem(exp.get("school_year") or ""))
         del_btn = ActionButton("Delete", variant="danger")
@@ -5123,16 +6194,35 @@ class StudentApp(QMainWindow):
         except ValueError:
             self.status_bar.showMessage("Invalid budget amount", 4000)
             return
-        try:
-            self.expense_service.save_budget(self.current_student_id, sy, amount)
+        student_id = self.current_student_id
+        self.save_budget_btn.setEnabled(False)
+        self.save_budget_btn.setText("Saving…")
+
+        def saved(_result):
+            if student_id != self.current_student_id:
+                return
             self._audit(
-                "save_budget", "student", self.current_student_id,
+                "save_budget", "student", student_id,
                 {"school_year": sy, "amount": amount},
             )
             self.status_bar.showMessage(f"Budget saved: PHP {amount:,.2f} for {sy}", 4000)
             self._refresh_expenses_view()
-        except Exception as e:
-            self.status_bar.showMessage(f"Budget save error: {e}", 8000)
+
+        def failed(error):
+            if student_id == self.current_student_id:
+                self.save_budget_btn.setEnabled(True)
+                self.save_budget_btn.setText("Save budget")
+            self.status_bar.showMessage(
+                "Could not save the budget. Check the office connection and try again.",
+                8000,
+            )
+            logging.getLogger(__name__).error("Budget save failed:\n%s", error)
+
+        return self._run_background(
+            lambda: self.expense_service.save_budget(student_id, sy, amount),
+            saved,
+            failed,
+        )
 
     def add_expense(self):
         if not self.current_student_id:
@@ -5149,12 +6239,15 @@ class StudentApp(QMainWindow):
             return
         school_year = self.exp_sy_entry.currentText()
         expense_date = self.exp_date.date().toString("yyyy-MM-dd")
-        try:
-            self.expense_service.add_expense(
-                self.current_student_id, desc, amount, expense_date, school_year
-            )
+        student_id = self.current_student_id
+        self.add_expense_btn.setEnabled(False)
+        self.add_expense_btn.setText("Adding…")
+
+        def added(_result):
+            if student_id != self.current_student_id:
+                return
             self._audit(
-                "add_expense", "student", self.current_student_id,
+                "add_expense", "student", student_id,
                 {"school_year": school_year, "amount": amount, "description": desc},
             )
             self.exp_desc.clear()
@@ -5162,18 +6255,65 @@ class StudentApp(QMainWindow):
             self.exp_date.setDate(QDate.currentDate())
             if self.exp_school_year.currentText() not in (ExpenseService.ALL_YEARS, school_year):
                 self.exp_school_year.setCurrentText(school_year)
-            self._refresh_expenses_view()
+            else:
+                self._refresh_expenses_view()
             self.status_bar.showMessage("Expense added", 4000)
-        except Exception as e:
-            QMessageBox.critical(self, "Add expense failed", f"Could not add expense:\n({type(e).__name__}) {e}")
+
+        def failed(error):
+            if student_id == self.current_student_id:
+                self.add_expense_btn.setEnabled(True)
+                self.add_expense_btn.setText("Add expense")
+            self.status_bar.showMessage(
+                "Could not add the expense. Check the details and office connection.",
+                8000,
+            )
+            logging.getLogger(__name__).error("Expense add failed:\n%s", error)
+
+        return self._run_background(
+            lambda: self.expense_service.add_expense(
+                student_id,
+                desc,
+                amount,
+                expense_date,
+                school_year,
+            ),
+            added,
+            failed,
+        )
 
     def delete_expense(self, eid):
-        try:
-            self.expense_service.delete_expense(eid)
+        confirm = QMessageBox.question(
+            self,
+            "Delete expense",
+            "Delete this expense from the student's history?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        student_id = self.current_student_id
+        self.expenses_table.setEnabled(False)
+
+        def deleted(_result):
             self._audit("delete", "expense", eid)
             self._refresh_expenses_view()
-        except Exception as e:
-            self.status_bar.showMessage(f"Error ({type(e).__name__}): {e}", 8000)
+            self.expenses_table.setEnabled(True)
+            self.status_bar.showMessage("Expense deleted", 4000)
+
+        def failed(error):
+            if student_id == self.current_student_id:
+                self.expenses_table.setEnabled(True)
+            self.status_bar.showMessage(
+                "Could not delete the expense. Check the office connection and try again.",
+                8000,
+            )
+            logging.getLogger(__name__).error("Expense delete failed:\n%s", error)
+
+        return self._run_background(
+            lambda: self.expense_service.delete_expense(eid),
+            deleted,
+            failed,
+        )
 
     def closeEvent(self, event):
         if self._workbook_dirty:

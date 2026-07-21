@@ -30,7 +30,7 @@ def render(output: Path, state: str) -> None:
         if state == "loading":
             dialog._stack.setCurrentIndex(1)
             dialog._set_loading_phase("database")
-            dialog._set_loading_status("Connecting to office database")
+            dialog._set_loading_status("Loading student records")
             dialog._set_loading_progress(72, animate=False)
         application.processEvents()
         output.parent.mkdir(parents=True, exist_ok=True)

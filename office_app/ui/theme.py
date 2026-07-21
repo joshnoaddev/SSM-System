@@ -4,58 +4,58 @@ from PyQt6.QtGui import QColor
 
 LIGHT_THEME = {
     # Brand
-    "primary": "#176B52",
-    "primary_hover": "#115943",
-    "primary_pressed": "#0C4736",
-    "primary_soft": "#E6F0EA",
-    "primary_selected": "#D4E6DC",
-    "secondary": "#5D6B65",
-    "accent": "#F0B429",
-    "accent_soft": "#FFF1C2",
+    "primary": "#073C33",
+    "primary_hover": "#0B5144",
+    "primary_pressed": "#052E27",
+    "primary_soft": "#EAF3EF",
+    "primary_selected": "#DCEDE6",
+    "secondary": "#60756F",
+    "accent": "#F2B705",
+    "accent_soft": "#FFF4CF",
 
     # Surfaces
-    "app_background": "#F4F2EC",
+    "app_background": "#FAF8F3",
     "surface": "#FFFDF9",
-    "surface_subtle": "#EFF1EC",
+    "surface_subtle": "#EAF3EF",
     "surface_raised": "#FFFFFF",
 
     # Text
-    "text_primary": "#14231D",
-    "text_secondary": "#627069",
-    "text_disabled": "#929D97",
+    "text_primary": "#17322C",
+    "text_secondary": "#60756F",
+    "text_disabled": "#8A9B96",
 
     # Borders
-    "border": "#C8D0C9",
-    "border_subtle": "#E0E4DE",
+    "border": "#DDE5DF",
+    "border_subtle": "#E3E9E5",
 
     # Navigation shell
-    "sidebar": "#0E2B23",
-    "sidebar_surface": "#17372E",
-    "sidebar_selected": "#21483C",
+    "sidebar": "#073C33",
+    "sidebar_surface": "#10483E",
+    "sidebar_selected": "#19574B",
     "sidebar_text": "#F8F6EF",
-    "sidebar_muted": "#A8BBB2",
+    "sidebar_muted": "#A9C9BF",
 
     # Semantic — success
-    "success": "#16845B",
-    "success_hover": "#116A49",
-    "success_pressed": "#0C5238",
-    "success_soft": "#EAF8F1",
+    "success": "#0E8A68",
+    "success_hover": "#0B7559",
+    "success_pressed": "#085E48",
+    "success_soft": "#E6F4EE",
 
     # Semantic — warning
-    "warning": "#B9690E",
-    "warning_hover": "#95530A",
-    "warning_pressed": "#754007",
-    "warning_soft": "#FFF5E6",
+    "warning": "#C89000",
+    "warning_hover": "#A97700",
+    "warning_pressed": "#865E00",
+    "warning_soft": "#FFF4CF",
 
     # Semantic — danger
-    "danger": "#B42318",
-    "danger_hover": "#912018",
-    "danger_pressed": "#7A271A",
-    "danger_soft": "#FEF3F2",
+    "danger": "#C95555",
+    "danger_hover": "#B24343",
+    "danger_pressed": "#963636",
+    "danger_soft": "#FBEDED",
 
     # Semantic — graduated (distinct purple, not a standard semantic state)
-    "graduated": "#6938EF",
-    "graduated_soft": "#F4F3FF",
+    "graduated": "#7056D8",
+    "graduated_soft": "#F0ECFF",
 
     # Semantic — neutral (used for disabled/unknown states in progress bars, badges)
     "neutral": "#98A2B3",

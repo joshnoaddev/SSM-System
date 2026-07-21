@@ -23,6 +23,7 @@ class BackgroundTask(QRunnable):
         super().__init__()
         self.function = function
         self.signals = TaskSignals()
+        self.done = False
 
     @pyqtSlot()
     def run(self) -> None:
@@ -33,4 +34,5 @@ class BackgroundTask(QRunnable):
         else:
             self.signals.succeeded.emit(result)
         finally:
+            self.done = True
             self.signals.finished.emit()

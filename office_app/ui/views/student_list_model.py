@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 
 from PyQt6.QtCore import QAbstractListModel, QModelIndex, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
@@ -126,9 +127,9 @@ class StudentSkeleton(QWidget):
 
 
 class StudentCardDelegate(QStyledItemDelegate):
-    """Paint student cards without creating one QWidget tree per row."""
+    """Paint the compact table rows defined by the Figma directory frame."""
 
-    CARD_HEIGHT = 108
+    CARD_HEIGHT = 86
 
     def sizeHint(self, option, index):
         # Let QListView own the row width. Returning a cached viewport width
@@ -206,19 +207,20 @@ class StudentCardDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        card = QRectF(option.rect.adjusted(6, 3, -6, -3))
+        row = QRectF(option.rect.adjusted(0, 0, 0, -1))
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
         focused = bool(option.state & QStyle.StateFlag.State_HasFocus)
-        background = theme_color("primary_selected") if selected else (
-            theme_color("primary_soft") if hovered else theme_color("surface")
-        )
+        if selected or hovered:
+            painter.fillRect(
+                row,
+                theme_color("primary_selected") if selected else theme_color("primary_soft"),
+            )
         painter.setPen(QPen(
             theme_color("primary") if focused else theme_color("border_subtle"),
             2 if focused else 1,
         ))
-        painter.setBrush(background)
-        painter.drawRoundedRect(card, 8, 8)
+        painter.drawLine(row.bottomLeft(), row.bottomRight())
 
         full_status = student.get("_full_status", "Active")
         status_text = student.get("_status_text", full_status)
@@ -227,61 +229,67 @@ class StudentCardDelegate(QStyledItemDelegate):
             "Graduated": theme_color("graduated"),
         }.get(full_status, theme_color("danger"))
 
-        # A slim support-status rail makes state readable before the row copy.
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(status_color)
         painter.drawRoundedRect(
-            QRectF(card.left() + 5, card.top() + 9, 4, card.height() - 18),
-            2,
-            2,
+            QRectF(row.left() + 1, row.top() + 8, 3, row.height() - 16), 1.5, 1.5,
         )
 
-        left = card.left() + 20
-        top = card.top() + 11
+        left = row.left() + 14
+        top = row.top() + 10
+        available = max(500.0, row.width() - 28)
+        student_w = available * 0.32
+        status_w = available * 0.15
+        profile_w = available * 0.16
+        budget_w = available * 0.23
+        student_x = left
+        status_x = student_x + student_w
+        profile_x = status_x + status_w
+        budget_x = profile_x + profile_w
+        updated_x = budget_x + budget_w
+
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(status_color)
-        painter.drawEllipse(QRectF(left, top + 4, 9, 9))
+        painter.drawEllipse(QRectF(student_x, top + 3, 8, 8))
 
         gender = str(student.get("gender") or "").strip().upper()
         name = f"{student.get('last_name', '')}, {student.get('first_name', '')}".strip(", ")
         if gender:
             name += f" ({gender})"
-        name_rect = QRectF(left + 17, top, card.width() - 148, 22)
-        self._text(
-            painter, name_rect, name or "Unnamed student", theme_color("text_primary"),
-            self._font(option.font, 15, bold=True),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-        )
-
-        self._text(
-            painter, QRectF(card.right() - 106, top, 88, 22), "Open record  >",
-            theme_color("primary"), self._font(option.font, 10, bold=True),
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        self._elided_text(
+            painter,
+            QRectF(student_x + 16, top - 2, student_w - 24, 20),
+            name or "Unnamed student",
+            theme_color("text_primary"),
+            self._font(option.font, 13, bold=True),
         )
 
         meta = (
             f"{student.get('area') or 'Area not set'}"
-            f"  \u2022  {student.get('sponsor') or 'Sponsor not set'}"
+            f"  /  {student.get('sponsor') or 'Sponsor not set'}"
         )
-        self._text(
-            painter, QRectF(left, top + 25, card.width() - 38, 18), meta,
-            theme_color("text_secondary"), self._font(option.font, 12),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        self._elided_text(
+            painter,
+            QRectF(student_x + 16, top + 22, student_w - 24, 18),
+            meta,
+            theme_color("text_secondary"),
+            self._font(option.font, 11),
         )
 
-        painter.setFont(self._font(option.font, 12, bold=True))
-        pill_y = top + 55
-        grade_width = self._pill(
-            painter, left, pill_y,
-            student.get("_grade_text") or student.get("grade") or "--",
-            theme_color("primary"), theme_color("primary_soft"), theme_color("primary_selected"),
-            max_width=108,
-        )
-        status_left = left + grade_width + 8
-        status_width = self._pill(
-            painter, status_left, pill_y, status_text,
-            status_color, theme_color("surface_subtle"), theme_color("border"),
-            max_width=86,
+        painter.setFont(self._font(option.font, 11, bold=True))
+        status_background = {
+            "Active": theme_color("success_soft"),
+            "Graduated": theme_color("graduated_soft"),
+        }.get(full_status, theme_color("danger_soft"))
+        self._pill(
+            painter,
+            status_x,
+            top - 2,
+            status_text,
+            status_color,
+            status_background,
+            status_background,
+            max_width=max(60, int(status_w - 12)),
         )
 
         completion = max(0, min(100, int(student.get("_completion", 0))))
@@ -290,89 +298,75 @@ class StudentCardDelegate(QStyledItemDelegate):
             theme_color("primary") if completion >= 75 else
             theme_color("warning") if completion >= 50 else theme_color("danger")
         )
-        profile_left = status_left + status_width + 16
-        profile_width = 104
         self._text(
-            painter, QRectF(profile_left, pill_y - 3, profile_width, 14),
-            f"PROFILE  {completion}%", theme_color("text_secondary"),
-            self._utility_font(option.font, 9),
+            painter, QRectF(profile_x, top - 2, profile_w - 14, 18),
+            f"{completion}%", theme_color("text_primary"),
+            self._font(option.font, 12, bold=True),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
         )
-        profile_bar = QRectF(profile_left, pill_y + 16, profile_width, 5)
+        profile_bar = QRectF(profile_x, top + 24, max(40, profile_w - 24), 6)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(theme_color("border_subtle"))
-        painter.drawRoundedRect(profile_bar, 2.5, 2.5)
+        painter.drawRoundedRect(profile_bar, 3, 3)
         if completion:
             painter.setBrush(progress_color)
             painter.drawRoundedRect(
                 QRectF(profile_bar.left(), profile_bar.top(), profile_bar.width() * completion / 100, profile_bar.height()),
-                2.5,
-                2.5,
+                3, 3,
             )
+        self._text(
+            painter, QRectF(profile_x, top + 36, profile_w - 14, 14),
+            "PROFILE", theme_color("text_disabled"),
+            self._utility_font(option.font, 8),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        )
 
         budget = student.get("_budget_status") or {}
-        budget_left = profile_left + profile_width + 18
-        budget_right = card.right() - 18
-        note_left = None
-        if card.width() >= 760:
-            note_left = card.left() + card.width() * 0.74
-            budget_right = note_left - 18
-        budget_width = max(0, budget_right - budget_left)
-        if budget_width >= 104:
-            allocated = bool(budget.get("allocated"))
-            percent = max(0, min(100, int(budget.get("percent") or 0)))
-            detail = budget.get("detail") or "Not allocated"
-            state_color = self._budget_color(budget.get("state"))
-            label_color = state_color if allocated else theme_color("text_disabled")
-            budget_label = f"BUDGET  {percent}%" if allocated else "BUDGET"
-            self._text(
-                painter, QRectF(budget_left, pill_y - 3, budget_width, 14),
-                budget_label, label_color,
-                self._utility_font(option.font, 9),
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        allocated = bool(budget.get("allocated"))
+        percent = max(0, min(100, int(budget.get("percent") or 0)))
+        detail = budget.get("detail") or "No budget allocated"
+        state_color = self._budget_color(budget.get("state"))
+        label_color = theme_color("text_primary") if allocated else theme_color("text_disabled")
+        self._elided_text(
+            painter, QRectF(budget_x, top - 2, budget_w - 18, 18),
+            detail, label_color, self._font(option.font, 11, bold=allocated),
+        )
+        budget_bar = QRectF(budget_x, top + 24, max(48, budget_w - 26), 6)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme_color("border_subtle"))
+        painter.drawRoundedRect(budget_bar, 3, 3)
+        if allocated and percent:
+            painter.setBrush(state_color)
+            painter.drawRoundedRect(
+                QRectF(budget_bar.left(), budget_bar.top(), budget_bar.width() * percent / 100, budget_bar.height()),
+                3, 3,
             )
+        budget_caption = f"{percent}% used" if allocated else ""
+        self._text(
+            painter, QRectF(budget_x, top + 36, budget_w - 18, 14),
+            budget_caption, state_color if allocated else theme_color("text_disabled"),
+            self._utility_font(option.font, 8),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        )
 
-            budget_bar = QRectF(budget_left, pill_y + 16, budget_width, 5)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(theme_color("border_subtle"))
-            painter.drawRoundedRect(budget_bar, 2.5, 2.5)
-            if allocated and percent:
-                painter.setBrush(state_color)
-                painter.drawRoundedRect(
-                    QRectF(
-                        budget_bar.left(),
-                        budget_bar.top(),
-                        budget_bar.width() * percent / 100,
-                        budget_bar.height(),
-                    ),
-                    2.5,
-                    2.5,
-                )
-
-            self._elided_text(
-                painter, QRectF(budget_left, pill_y + 23, budget_width, 13),
-                detail,
-                label_color,
-                self._font(option.font, 9, bold=allocated),
-            )
-
-        if note_left is not None:
-            remarks = " ".join(str(student.get("remarks") or "").split()) or "No remarks"
-            note_width = card.right() - note_left - 16
-            painter.setPen(QPen(theme_color("border_subtle"), 1))
-            painter.drawLine(
-                int(note_left - 10), int(pill_y - 2),
-                int(note_left - 10), int(pill_y + 25),
-            )
-            self._text(
-                painter, QRectF(note_left, pill_y - 3, note_width, 14), "LATEST NOTE",
-                theme_color("text_disabled"), self._utility_font(option.font, 9),
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            )
-            self._elided_text(
-                painter, QRectF(note_left, pill_y + 11, note_width, 17), remarks,
-                theme_color("text_secondary") if student.get("remarks") else theme_color("text_disabled"),
-                self._font(option.font, 10),
-            )
+        updated = str(student.get("sheet_synced_at") or "").strip()
+        if updated:
+            try:
+                parsed = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                updated = parsed.strftime("%b %d").replace(" 0", " ")
+            except ValueError:
+                updated = updated[:10]
+        else:
+            updated = "Current"
+        self._text(
+            painter, QRectF(updated_x, top + 5, max(30, available * 0.10 - 18), 20),
+            updated, theme_color("text_secondary"), self._font(option.font, 10),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        )
+        self._text(
+            painter, QRectF(row.right() - 18, top + 4, 12, 20),
+            "›", theme_color("text_secondary"), self._font(option.font, 18),
+            Qt.AlignmentFlag.AlignCenter,
+        )
 
         painter.restore()

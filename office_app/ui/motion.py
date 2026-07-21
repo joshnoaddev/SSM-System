@@ -246,6 +246,41 @@ def animate_count(
     animation.start()
 
 
+def animate_progress(
+    progress_bar,
+    target: int,
+    *,
+    motion_enabled: bool,
+    duration_ms: int = 240,
+) -> None:
+    """Ease a determinate progress meter to its synchronized value."""
+    target = max(0, min(100, int(target)))
+    previous = getattr(progress_bar, "_value_animation", None)
+    if previous is not None:
+        previous.stop()
+
+    if not motion_enabled:
+        progress_bar.setValue(target)
+        return
+
+    start = int(progress_bar.value())
+    if start == target:
+        progress_bar.setValue(target)
+        return
+
+    animation = QVariantAnimation(progress_bar)
+    animation.setDuration(min(320, max(120, duration_ms)))
+    animation.setStartValue(start)
+    animation.setEndValue(target)
+    animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+    animation.valueChanged.connect(
+        lambda value: progress_bar.setValue(round(float(value)))
+    )
+    animation.finished.connect(lambda: progress_bar.setValue(target))
+    progress_bar._value_animation = animation
+    animation.start()
+
+
 def fade_in(
     widget: QWidget,
     *,

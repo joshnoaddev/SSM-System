@@ -144,6 +144,36 @@ class ExpenseService:
         return total
 
     @classmethod
+    def reconcile_summary(
+        cls,
+        summary: Optional[Dict[str, Any]],
+        expenses: Iterable[Dict[str, Any]],
+        school_year: Optional[str] = ALL_YEARS,
+    ) -> Dict[str, Any]:
+        """Make every visible expense figure derive from the displayed rows.
+
+        Supabase reads are separate requests, so an edit from another computer
+        can land between the aggregate query and the history query. The table is
+        the most specific snapshot; using its total for the meter and labels
+        prevents contradictory figures in a single rendered view.
+        """
+        reconciled = dict(summary or {})
+        try:
+            budget = float(reconciled.get("total_budget") or 0)
+        except (TypeError, ValueError):
+            budget = 0.0
+        spent = cls.calculate_total(expenses)
+        reconciled.update(
+            {
+                "school_year": school_year or cls.ALL_YEARS,
+                "total_budget": budget,
+                "total_expenses": spent,
+                "remaining_balance": budget - spent,
+            }
+        )
+        return reconciled
+
+    @classmethod
     def budget_usage(cls, summary: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         if not summary:
             return {
