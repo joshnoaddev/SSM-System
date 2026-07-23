@@ -1397,11 +1397,39 @@ class StudentApp(QMainWindow):
         self.header_secondary_button = ActionButton("Refresh data", variant="secondary")
         self.header_secondary_button.setObjectName("HeaderSecondaryAction")
         self.header_secondary_button.clicked.connect(self._header_secondary_action_clicked)
+        self.header_profile_photo_button = ActionButton(
+            "Add photo", variant="secondary"
+        )
+        self.header_profile_photo_button.setObjectName("HeaderProfilePhotoAction")
+        self.header_profile_photo_button.setAccessibleName(
+            "Add or change student photo"
+        )
+        self.header_profile_photo_button.clicked.connect(self.change_photo)
+        self.header_profile_photo_button.hide()
+        self.header_profile_expenses_button = ActionButton(
+            "Expenses", variant="secondary"
+        )
+        self.header_profile_expenses_button.setObjectName(
+            "HeaderProfileExpensesAction"
+        )
+        self.header_profile_expenses_button.setAccessibleName(
+            "Open this student's expenses"
+        )
+        self.header_profile_expenses_button.clicked.connect(self.nav_expenses)
+        self.header_profile_expenses_button.hide()
         self.header_add_button = ActionButton("Refresh data", variant="secondary")
         self.header_add_button.setObjectName("HeaderPrimaryAction")
         self.header_add_button.clicked.connect(self._header_action_clicked)
         header_actions.addWidget(
             self.header_secondary_button,
+            alignment=Qt.AlignmentFlag.AlignVCenter,
+        )
+        header_actions.addWidget(
+            self.header_profile_photo_button,
+            alignment=Qt.AlignmentFlag.AlignVCenter,
+        )
+        header_actions.addWidget(
+            self.header_profile_expenses_button,
             alignment=Qt.AlignmentFlag.AlignVCenter,
         )
         header_actions.addWidget(
@@ -1589,12 +1617,16 @@ class StudentApp(QMainWindow):
         self._configure_header_button(self.header_secondary_button, secondary)
         self._configure_header_button(self.header_add_button, primary)
         profile_header = index == 2
+        self.header_profile_photo_button.setVisible(profile_header)
+        self.header_profile_expenses_button.setVisible(profile_header)
         self.header_actions_layout.setContentsMargins(
             0, 0, 10 if profile_header else 0, 0
         )
-        self.header_actions_layout.setSpacing(10 if profile_header else 8)
+        self.header_actions_layout.setSpacing(8)
         if profile_header:
             self.header_secondary_button.setFixedWidth(126)
+            self.header_profile_photo_button.setFixedSize(106, 38)
+            self.header_profile_expenses_button.setFixedSize(92, 38)
             self.header_add_button.setFixedWidth(92)
 
     @staticmethod
@@ -5499,6 +5531,8 @@ class StudentApp(QMainWindow):
             self.remove_student_btn,
             self.change_photo_btn,
             self.remove_photo_btn,
+            self.header_profile_photo_button,
+            self.header_profile_expenses_button,
         ):
             button.setEnabled(False)
         for action in (
@@ -5528,6 +5562,8 @@ class StudentApp(QMainWindow):
             self.edit_btn.setEnabled(True)
             self.remove_student_btn.setEnabled(True)
             self.change_photo_btn.setEnabled(True)
+            self.header_profile_photo_button.setEnabled(True)
+            self.header_profile_expenses_button.setEnabled(True)
             for action in (
                 self.profile_change_photo_action,
                 self.profile_remove_photo_action,
@@ -5657,6 +5693,14 @@ class StudentApp(QMainWindow):
             )
 
             photo_url = s.get("photo_url")
+            self.header_profile_photo_button.setText(
+                "Change photo" if photo_url else "Add photo"
+            )
+            self.header_profile_photo_button.setToolTip(
+                "Replace the current student photo"
+                if photo_url
+                else "Upload a photo for this student"
+            )
             self._load_photo_from_url(self.photo_label, photo_url)
             self.remove_photo_btn.hide()
             self.profile_remove_photo_action.setVisible(bool(photo_url))
@@ -5815,6 +5859,7 @@ class StudentApp(QMainWindow):
         sid = self.current_student_id
         self.status_bar.showMessage("Uploading photo... please wait")
         self.change_photo_btn.setEnabled(False)
+        self.header_profile_photo_button.setEnabled(False)
 
         def upload():
             log = []
@@ -5826,12 +5871,14 @@ class StudentApp(QMainWindow):
 
         def done(_url):
             self.change_photo_btn.setEnabled(True)
+            self.header_profile_photo_button.setEnabled(True)
             if self.current_student_id == sid:
                 self._load_profile(sid)
             self.status_bar.showMessage("Photo updated", 5000)
 
         def failed(error):
             self.change_photo_btn.setEnabled(True)
+            self.header_profile_photo_button.setEnabled(True)
             logging.getLogger(__name__).error("Photo upload failed:\n%s", error)
             self.status_bar.showMessage("Photo upload failed", 5000)
             QMessageBox.critical(self, "Photo upload failed", error.strip().splitlines()[-1])

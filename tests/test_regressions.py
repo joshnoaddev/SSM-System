@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import UUID
 
+from openpyxl import Workbook
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
@@ -57,6 +58,7 @@ from office_app.ui.views.student_list_model import (
     StudentCardDelegate,
     StudentListModel,
 )
+from tools.import_manila_students import parse_expenses, split_name
 
 
 _QT_APPLICATION = None
@@ -973,6 +975,36 @@ class RegressionTests(unittest.TestCase):
 
         self.assertFalse(is_connection_configuration_error(raw_error))
         self.assertIn("internet connection", friendly_connection_error(raw_error))
+
+
+class ManilaImportRegressionTests(unittest.TestCase):
+    def test_version_suffix_is_not_imported_as_part_of_student_name(self):
+        self.assertEqual(
+            split_name("Cerbito, Angel_011926", "Cerbito, Angel_011926.xlsx"),
+            ("Cerbito", "Angel"),
+        )
+
+    def test_running_balance_is_not_mistaken_for_an_expense(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Date", "Particulars", "Debit", "Credit", "Balance"])
+        sheet.append(["2025-01-10", "Tuition payment", None, 29300, -67339])
+
+        expenses = parse_expenses(sheet, 1, "Awit, Mark Bryan")
+
+        self.assertEqual(expenses, [])
+
+    def test_negative_debit_is_imported_as_its_absolute_expense(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Date", "Particulars", "Debit", "Credit", "Balance"])
+        sheet.append(["2025-01-10", "School allowance", -975, None, 3525])
+
+        expenses = parse_expenses(sheet, 1, "Pajaron, Jovanie")
+
+        self.assertEqual(len(expenses), 1)
+        self.assertEqual(expenses[0]["amount"], 975)
+        self.assertEqual(expenses[0]["school_year"], "2024-2025")
 
 
 if __name__ == "__main__":
