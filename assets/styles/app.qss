@@ -1,11 +1,11 @@
 /* Palette tokens are expanded by render_qss() in app.py. Spacing uses a 4/8px grid. */
-* { font-family: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", sans-serif; font-size: @font_body; color: @text_primary; }
+* { font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif; font-size: @font_body; color: @text_primary; }
 QMainWindow, QWidget#MainContent { background: @app_background; }
 QLabel { background: transparent; }
 
 /* Typography */
 *#HeaderEyebrow, *#UtilityLabel, *#SidebarGroupLabel, *#SidebarVersion {
-    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: @font_micro;
     font-weight: 700;
     letter-spacing: 1px;
@@ -13,7 +13,7 @@ QLabel { background: transparent; }
 *#HeaderEyebrow { color: @primary; }
 *#HeaderTitle {
     color: @text_primary;
-    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Inter", "Segoe UI Variable Display", "Segoe UI", sans-serif;
     font-size: 23px;
     font-weight: 700;
 }
@@ -25,15 +25,15 @@ QLabel { background: transparent; }
 }
 *#SectionTitle, *#ProfileTitle {
     color: @text_primary;
-    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Inter", "Segoe UI Variable Display", "Segoe UI", sans-serif;
     font-size: @font_heading;
     font-weight: 700;
 }
 *#FormModeTitle { color: @text_primary; font-size: @font_subheading; font-weight: 700; }
-*#ProfileTitle { font-size: 21px; }
+*#ProfileTitle { font-size: 22px; }
 *#CardHeading, *#WorkbookFileLabel, *#EmptyStateTitle {
     color: @text_primary;
-    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Inter", "Segoe UI Variable Display", "Segoe UI", sans-serif;
     font-size: @font_subheading;
     font-weight: 700;
 }
@@ -44,7 +44,7 @@ QLabel { background: transparent; }
 *#FieldValue[emphasis="true"] { font-weight: 700; }
 *#CardValue {
     color: @text_primary;
-    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Inter", "Segoe UI Variable Display", "Segoe UI", sans-serif;
     font-size: @font_metric;
     font-weight: 700;
 }
@@ -85,7 +85,7 @@ QWidget#BrandLogoWell {
 *#BrandLogoFallback { font-size: 28px; font-weight: 700; }
 *#BrandTitle {
     color: @sidebar_text;
-    font-family: "Bahnschrift SemiBold", "Segoe UI", sans-serif;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 16px;
     font-weight: 700;
 }
@@ -97,7 +97,7 @@ QFrame#SidebarDivider {
 *#SidebarGroupLabel {
     color: @sidebar_muted;
     padding: 3px 10px 5px 10px;
-    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.7px;
@@ -138,7 +138,7 @@ QWidget#OperatorPanel {
 *#SidebarCaption {
     color: @sidebar_muted;
     padding: 0;
-    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 8px;
     font-weight: 600;
 }
@@ -209,6 +209,12 @@ QPushButton#SuccessBtn:pressed, QPushButton[variant="success"]:pressed { backgro
 QPushButton#WarningBtn, QPushButton[variant="warning"] { background: @warning; border-color: @warning; }
 QPushButton#WarningBtn:hover, QPushButton[variant="warning"]:hover { background: @warning_hover; border-color: @warning_hover; }
 QPushButton#WarningBtn:pressed, QPushButton[variant="warning"]:pressed { background: @warning_pressed; border-color: @warning_pressed; }
+QPushButton#HeaderSecondaryAction, QPushButton#HeaderPrimaryAction {
+    padding: 6px 12px;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+}
 
 /* Inputs */
 QLineEdit, QTextEdit, QComboBox, QDoubleSpinBox, QDateEdit { min-height: 26px; padding: @space_xs @space_sm; border: 1px solid @border; border-radius: 7px; background: @surface_raised; color: @text_primary; selection-background-color: @primary_selected; selection-color: @text_primary; }
@@ -250,7 +256,7 @@ QWidget#Card, QWidget#WorkbookToolbar, QWidget#SettingsCard, QWidget#SyncSetting
     border-radius: 8px;
 }
 QWidget#Card[component="profile"] { background: @surface; }
-QWidget#ProfileSummary { background: @surface; border: 1px solid @border_subtle; border-radius: 8px; }
+QWidget#ProfileSummary { background: @surface; border: 1px solid @border; border-radius: 11px; }
 QFrame#ProfileAccent { background: @accent; border: none; border-radius: 2px; }
 QFrame#ProfileAccent[status="active"] { background: @success; }
 QFrame#ProfileAccent[status="inactive"] { background: @danger; }
@@ -260,9 +266,11 @@ QFrame#ProfileAccent[status="graduated"] { background: @graduated; }
     border: none;
     border-radius: 48px;
     color: @graduated;
-    font-size: 14px;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 18px;
     font-weight: 700;
 }
+QWidget#ProfileIdentity, QWidget#ProfileMetric { background: transparent; border: none; }
 QWidget#ProfileInfoCard {
     background: @surface;
     border: 1px solid @border;
@@ -270,11 +278,50 @@ QWidget#ProfileInfoCard {
 }
 QWidget#NextActionCallout {
     background: @surface_subtle;
-    border: 1px solid @border_subtle;
+    border: none;
     border-radius: 8px;
 }
+QWidget#ProfileInfoCard * { font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+QWidget#ProfileInfoCard *#CardHeading { font-size: 15px; font-weight: 600; }
 *#ProfileFieldLabel { color: @text_secondary; font-size: 10px; font-weight: 500; }
-*#ProfileFieldValue { color: @text_primary; font-size: 12px; font-weight: 650; }
+*#ProfileFieldValue { color: @text_primary; font-size: 12px; font-weight: 600; }
+*#ProfileMetricLabel, *#ProfileRemarksLabel {
+    color: @text_disabled;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+}
+*#ProfileMetricValue {
+    color: @text_primary;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+}
+*#ProfileBudgetValue {
+    color: @text_secondary;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+}
+*#RemarksText {
+    color: @text_primary;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+}
+*#ProfileNextActionTitle {
+    color: @success;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+}
+*#ProfileNextActionCopy {
+    color: @text_primary;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+}
 *#ProfileStatusBadge {
     padding: 3px 9px;
     border: none;
@@ -285,7 +332,12 @@ QWidget#NextActionCallout {
     font-weight: 700;
 }
 *#ProfileStatusBadge[status="inactive"] { background: @danger_soft; color: @danger; }
-*#ProfileStatusBadge[status="graduated"] { background: @graduated_soft; color: @graduated; }
+*#ProfileStatusBadge[status="graduated"] {
+    padding-left: 12px;
+    padding-right: 12px;
+    background: @graduated_soft;
+    color: @graduated;
+}
 QProgressBar#ProfileLinearProgress {
     border: none;
     border-radius: 4px;
@@ -339,7 +391,7 @@ QWidget#DashboardMetricCard {
 }
 QWidget#DashboardMetricCard *#CardValue {
     font-size: 27px;
-    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Inter", "Segoe UI Variable Display", "Segoe UI", sans-serif;
     font-weight: 700;
 }
 QWidget#DashboardListCard {
@@ -355,7 +407,7 @@ QWidget#DashboardListCard[role="attention"] {
 }
 *#InsightEyebrow {
     color: @text_secondary;
-    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: @font_micro;
     font-weight: 700;
     letter-spacing: 1px;
@@ -372,7 +424,7 @@ QWidget#DashboardPanel {
 }
 *#DashboardHeroValue {
     color: @text_primary;
-    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-family: "Inter", "Segoe UI Variable Display", "Segoe UI", sans-serif;
     font-size: 30px;
     font-weight: 700;
 }
@@ -506,7 +558,7 @@ QFrame#StudentTableHeader {
 }
 *#StudentTableHeading {
     color: @text_secondary;
-    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.4px;
@@ -569,7 +621,7 @@ QHeaderView::section {
     border-bottom: 1px solid @border;
     background: @surface_subtle;
     color: @text_secondary;
-    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.5px;
@@ -598,7 +650,7 @@ QProgressBar#BudgetProgress[state="neutral"]::chunk { background: @text_disabled
     border-radius: 8px;
     background: @success_soft;
     color: @success;
-    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 10px;
     font-weight: 800;
 }

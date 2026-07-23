@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QComboBox, QStatusBar, QDialog, QTabWidget,
     QProgressBar, QProgressDialog, QFrame, QGridLayout, QScrollBar, QDateEdit,
     QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QSizePolicy, QStyle,
-    QMenu
+    QMenu, QSpacerItem
 )
 from PyQt6.QtWidgets import (
     QComboBox as NativeComboBox,
@@ -29,7 +29,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPixmap, QPainter, QColor, QPen, QIcon, QImage, QLinearGradient, QFont,
-    QRadialGradient, QPainterPath, QAction, QKeySequence
+    QRadialGradient, QPainterPath, QAction, QKeySequence, QFontDatabase
 )
 
 from supabase import Client
@@ -127,6 +127,22 @@ def render_qss(template: str) -> str:
         value = tokens[name]
         template = template.replace(f"@{name}", value)
     return template
+
+
+_APP_FONTS_REGISTERED = False
+
+
+def register_app_fonts() -> None:
+    """Register the bundled Figma typeface once for source and frozen builds."""
+    global _APP_FONTS_REGISTERED
+    if _APP_FONTS_REGISTERED:
+        return
+    font_path = resource_path(os.path.join("assets", "fonts", "InterVariable.ttf"))
+    if QFontDatabase.addApplicationFont(font_path) < 0:
+        logging.getLogger(__name__).warning(
+            "Could not register bundled Inter font at %s", font_path
+        )
+    _APP_FONTS_REGISTERED = True
 
 
 def css_color(name: str, alpha: int | None = None) -> str:
@@ -253,17 +269,26 @@ def trim_transparent_pixmap(pixmap, alpha_threshold=8):
 
 
 def set_logo_pixmap(label, width, height, fallback_text="\u271d"):
-    # Use the compact Figma mark in navigation; the detailed crest is reserved
-    # for documents and the application icon.
-    pix = QPixmap(resource_path(os.path.join("assets", "ssm_startup_mark.png")))
+    # Draw the compact Figma mark at its final size so the SSM monogram stays
+    # crisp in both the navigation rail and the startup chooser.
+    pix = QPixmap(width, height)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    diameter = min(width, height)
+    bounds = QRectF((width - diameter) / 2, (height - diameter) / 2, diameter, diameter)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(theme_color("accent"))
+    painter.drawEllipse(bounds)
+    painter.setPen(theme_color("primary"))
+    font = QFont("Inter", max(6, int(diameter * 0.21)))
+    font.setWeight(QFont.Weight.Bold)
+    painter.setFont(font)
+    painter.drawText(bounds, Qt.AlignmentFlag.AlignCenter, "SSM")
+    painter.end()
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     label.setFixedSize(width, height)
-    if pix.isNull():
-        label.setText(fallback_text)
-        label.setObjectName("BrandLogoFallback")
-        return
-    pix = trim_transparent_pixmap(pix)
-    label.setPixmap(pix.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+    label.setPixmap(pix)
     label.setObjectName("BrandLogo")
 
 
@@ -1219,6 +1244,7 @@ class CircularProgress(QWidget):
 class StudentApp(QMainWindow):
     def __init__(self, sb: Client, initial_user: str = "Joshua"):
         super().__init__()
+        register_app_fonts()
         self.sb = sb
         self.student_service = StudentService()
         self.student_repository = self.student_service.repository
@@ -1311,7 +1337,7 @@ class StudentApp(QMainWindow):
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(28, 20, 28, 18)
         # This places every page body on the 96px Figma baseline.
-        content_layout.setSpacing(28)
+        content_layout.setSpacing(26)
 
         # Workspace header: page context on the left, live office state on the right.
         header = QFrame()
@@ -1347,6 +1373,7 @@ class StudentApp(QMainWindow):
         header_actions = QHBoxLayout(header_actions_widget)
         header_actions.setContentsMargins(0, 0, 0, 0)
         header_actions.setSpacing(8)
+        self.header_actions_layout = header_actions
         self.connection_badge = StatusBadge(
             "Connecting", state="neutral", role="ConnectionBadge"
         )
@@ -1543,6 +1570,14 @@ class StudentApp(QMainWindow):
         secondary, primary = action_map.get(index, (None, None))
         self._configure_header_button(self.header_secondary_button, secondary)
         self._configure_header_button(self.header_add_button, primary)
+        profile_header = index == 2
+        self.header_actions_layout.setContentsMargins(
+            0, 0, 10 if profile_header else 0, 0
+        )
+        self.header_actions_layout.setSpacing(10 if profile_header else 8)
+        if profile_header:
+            self.header_secondary_button.setFixedWidth(126)
+            self.header_add_button.setFixedWidth(92)
 
     @staticmethod
     def _configure_header_button(button, spec) -> None:
@@ -1601,8 +1636,35 @@ class StudentApp(QMainWindow):
         """Keep the workspace header usable at the supported minimum width."""
         super().resizeEvent(event)
         self._update_compact_header()
+        self._update_profile_layout()
         self._relayout_dashboard_metrics()
         self._relayout_dashboard_insights()
+
+    def _update_profile_layout(self) -> None:
+        """Preserve the Figma profile geometry while keeping 980px usable."""
+        summary_layout = getattr(self, "profile_summary_layout", None)
+        if summary_layout is None:
+            return
+        compact = self.width() < 1120
+        summary_layout.setContentsMargins(
+            0,
+            15,
+            18 if compact else 44,
+            15,
+        )
+        self.profile_accent_gap.changeSize(12 if compact else 20, 0)
+        self.profile_metric_gap.changeSize(12 if compact else 44, 0)
+        self.profile_metric_widget.setFixedWidth(112 if compact else 180)
+        self.profile_budget_widget.setFixedWidth(140 if compact else 244)
+        self.profile_cards_layout.setVerticalSpacing(10 if compact else 20)
+        for grid in self.profile_field_grids:
+            for row in range(grid.rowCount()):
+                grid.setRowMinimumHeight(row, 34 if compact else 40)
+        for card in self.profile_top_cards:
+            card.setFixedHeight(200 if compact else 222)
+        for card in self.profile_bottom_cards:
+            card.setFixedHeight(200 if compact else 220)
+        summary_layout.invalidate()
 
     def _update_compact_header(self) -> None:
         if not hasattr(self, "header_add_button"):
@@ -3619,26 +3681,42 @@ class StudentApp(QMainWindow):
         summary.setObjectName("ProfileSummary")
         summary.setFixedHeight(126)
         summary_layout = QHBoxLayout(summary)
-        summary_layout.setContentsMargins(0, 18, 22, 18)
-        summary_layout.setSpacing(18)
+        summary_layout.setContentsMargins(0, 15, 44, 15)
+        summary_layout.setSpacing(0)
+        self.profile_summary_layout = summary_layout
         accent = QFrame()
         accent.setObjectName("ProfileAccent")
         accent.setFixedWidth(4)
         self.profile_summary_accent = accent
         summary_layout.addWidget(accent)
 
+        self.profile_accent_gap = QSpacerItem(
+            20, 0, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum
+        )
+        summary_layout.addSpacerItem(self.profile_accent_gap)
+
         self.photo_label = QLabel("Photo")
         self.photo_label.setObjectName("ProfileAvatar")
         self.photo_label.setFixedSize(96, 96)
         self.photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         summary_layout.addWidget(self.photo_label)
+        summary_layout.addSpacing(18)
 
-        identity = QVBoxLayout()
+        identity_widget = QWidget()
+        identity_widget.setObjectName("ProfileIdentity")
+        identity = QVBoxLayout(identity_widget)
+        identity.setContentsMargins(0, 0, 0, 0)
         identity.setSpacing(2)
         self.lbl_profile_name = TitleLabel("Student name")
         self.lbl_profile_name.setObjectName("ProfileTitle")
+        self.lbl_profile_name.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         self.profile_meta_label = QLabel("Area not set  /  Sponsor not set")
         self.profile_meta_label.setObjectName("Caption")
+        self.profile_meta_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         self.lbl_profile_status = QLabel("Active")
         self.lbl_profile_status.setObjectName("ProfileStatusBadge")
         self.lbl_profile_status.setFixedHeight(24)
@@ -3646,57 +3724,75 @@ class StudentApp(QMainWindow):
         identity.addWidget(self.lbl_profile_name)
         identity.addWidget(self.profile_meta_label)
         identity.addWidget(self.lbl_profile_status)
-        summary_layout.addLayout(identity, 2)
+        identity.addStretch()
+        summary_layout.addWidget(identity_widget, 1)
 
-        profile_metric = QVBoxLayout()
+        self.profile_metric_widget = QWidget()
+        self.profile_metric_widget.setObjectName("ProfileMetric")
+        self.profile_metric_widget.setFixedWidth(180)
+        profile_metric = QVBoxLayout(self.profile_metric_widget)
+        profile_metric.setContentsMargins(0, 3, 0, 0)
         profile_metric.setSpacing(5)
         profile_label = QLabel("PROFILE")
-        profile_label.setObjectName("UtilityLabel")
+        profile_label.setObjectName("ProfileMetricLabel")
         self.profile_completion_label = StrongBodyLabel("0%")
-        self.profile_progress = QProgressBar()
+        self.profile_completion_label.setObjectName("ProfileMetricValue")
+        self.profile_progress = NativeProgressBar()
         self.profile_progress.setObjectName("ProfileLinearProgress")
         self.profile_progress.setRange(0, 100)
         self.profile_progress.setValue(0)
         self.profile_progress.setTextVisible(False)
-        self.profile_progress.setFixedSize(154, 7)
+        self.profile_progress.setFixedHeight(7)
         profile_metric.addWidget(profile_label)
         profile_metric.addWidget(self.profile_completion_label)
         profile_metric.addWidget(self.profile_progress)
-        summary_layout.addLayout(profile_metric)
+        profile_metric.addStretch()
+        summary_layout.addWidget(self.profile_metric_widget)
 
-        budget_metric = QVBoxLayout()
+        self.profile_metric_gap = QSpacerItem(
+            44, 0, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum
+        )
+        summary_layout.addSpacerItem(self.profile_metric_gap)
+
+        self.profile_budget_widget = QWidget()
+        self.profile_budget_widget.setObjectName("ProfileMetric")
+        self.profile_budget_widget.setFixedWidth(244)
+        budget_metric = QVBoxLayout(self.profile_budget_widget)
+        budget_metric.setContentsMargins(0, 3, 0, 0)
         budget_metric.setSpacing(5)
         budget_label = QLabel("BUDGET")
-        budget_label.setObjectName("UtilityLabel")
+        budget_label.setObjectName("ProfileMetricLabel")
         self.profile_budget_label = QLabel("No budget allocated")
-        self.profile_budget_label.setObjectName("Caption")
-        self.profile_budget_bar = QProgressBar()
+        self.profile_budget_label.setObjectName("ProfileBudgetValue")
+        self.profile_budget_bar = NativeProgressBar()
         self.profile_budget_bar.setObjectName("BudgetProgress")
         self.profile_budget_bar.setRange(0, 100)
         self.profile_budget_bar.setValue(0)
         self.profile_budget_bar.setTextVisible(False)
-        self.profile_budget_bar.setFixedSize(196, 7)
+        self.profile_budget_bar.setFixedHeight(7)
         budget_metric.addWidget(budget_label)
         budget_metric.addWidget(self.profile_budget_label)
         budget_metric.addWidget(self.profile_budget_bar)
-        summary_layout.addLayout(budget_metric)
+        budget_metric.addStretch()
+        summary_layout.addWidget(self.profile_budget_widget)
         outer.addWidget(summary)
 
         self.profile_data_labels = {}
+        self.profile_field_grids = []
 
-        def info_card(title_text, fields):
+        def info_card(title_text, fields, *, label_width=140):
             card = Card()
             card.setObjectName("ProfileInfoCard")
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(18, 16, 18, 16)
-            card_layout.setSpacing(9)
+            card_layout.setContentsMargins(20, 16, 20, 16)
+            card_layout.setSpacing(6)
             title = StrongBodyLabel(title_text)
             title.setObjectName("CardHeading")
             card_layout.addWidget(title)
             grid = QGridLayout()
             grid.setHorizontalSpacing(18)
-            grid.setVerticalSpacing(9)
-            grid.setColumnMinimumWidth(0, 112)
+            grid.setVerticalSpacing(0)
+            grid.setColumnMinimumWidth(0, label_width)
             grid.setColumnStretch(1, 1)
             for row, (label_text, key) in enumerate(fields):
                 label = QLabel(label_text)
@@ -3706,24 +3802,27 @@ class StudentApp(QMainWindow):
                 value.setWordWrap(True)
                 value.setMinimumWidth(0)
                 grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop)
-                grid.addWidget(value, row, 1)
+                grid.addWidget(value, row, 1, Qt.AlignmentFlag.AlignTop)
+                grid.setRowMinimumHeight(row, 40)
                 self.profile_data_labels[key] = value
+            self.profile_field_grids.append(grid)
             card_layout.addLayout(grid)
             card_layout.addStretch()
             return card
 
         cards = QGridLayout()
-        cards.setHorizontalSpacing(14)
+        self.profile_cards_layout = cards
+        cards.setHorizontalSpacing(18)
         cards.setVerticalSpacing(20)
         student_card = info_card("Student details", (
-            ("Gender", "gender"), ("Grade / year", "grade"),
-            ("Birthday", "birthday"), ("School", "school"),
+            ("Grade / year", "grade"), ("Birthday", "birthday"),
+            ("School", "school"),
             ("Course / track", "course"),
         ))
         support_card = info_card("Support details", (
             ("Status", "support_status"), ("Area", "area"),
             ("Sponsor", "sponsor"), ("School year", "school_year"),
-        ))
+        ), label_width=142)
         contact_card = info_card("Contact and family", (
             ("Contact", "contact"), ("Parent / guardian", "parents"),
             ("City", "city"), ("Address", "address"),
@@ -3732,11 +3831,16 @@ class StudentApp(QMainWindow):
         notes_card = Card()
         notes_card.setObjectName("ProfileInfoCard")
         notes_layout = QVBoxLayout(notes_card)
-        notes_layout.setContentsMargins(18, 16, 18, 16)
-        notes_layout.setSpacing(10)
+        notes_layout.setContentsMargins(20, 16, 20, 26)
+        notes_layout.setSpacing(0)
         notes_title = StrongBodyLabel("Office notes")
         notes_title.setObjectName("CardHeading")
         notes_layout.addWidget(notes_title)
+        notes_layout.addSpacing(8)
+        remarks_label = QLabel("REMARKS")
+        remarks_label.setObjectName("ProfileRemarksLabel")
+        notes_layout.addWidget(remarks_label)
+        notes_layout.addSpacing(6)
         self.remarks_edit = QTextEdit()
         self.remarks_edit.setObjectName("RemarksEditor")
         self.remarks_edit.setPlaceholderText("Add a concise office note")
@@ -3754,10 +3858,15 @@ class StudentApp(QMainWindow):
         next_layout.setContentsMargins(12, 8, 12, 8)
         next_layout.setSpacing(2)
         next_title = QLabel("NEXT ACTION")
-        next_title.setObjectName("UtilityLabel")
-        next_copy = StrongBodyLabel("Review during the next office follow-up")
+        next_title.setObjectName("ProfileNextActionTitle")
+        self.profile_next_action_copy = QLabel(
+            "Review during the next office follow-up."
+        )
+        self.profile_next_action_copy.setObjectName("ProfileNextActionCopy")
+        self.profile_next_action_copy.setWordWrap(True)
         next_layout.addWidget(next_title)
-        next_layout.addWidget(next_copy)
+        next_layout.addWidget(self.profile_next_action_copy)
+        next_action.setFixedHeight(58)
         notes_layout.addWidget(next_action)
         self.save_remarks_btn = ActionButton("Save notes")
         self.save_remarks_btn.clicked.connect(self.save_remarks)
@@ -3781,15 +3890,18 @@ class StudentApp(QMainWindow):
         support_card.setFixedHeight(222)
         contact_card.setFixedHeight(220)
         notes_card.setFixedHeight(220)
+        self.profile_top_cards = (student_card, support_card)
+        self.profile_bottom_cards = (contact_card, notes_card)
         cards.addWidget(student_card, 0, 0)
         cards.addWidget(support_card, 0, 1)
         cards.addWidget(contact_card, 1, 0)
         cards.addWidget(notes_card, 1, 1)
-        cards.setColumnStretch(0, 1)
-        cards.setColumnStretch(1, 1)
+        cards.setColumnStretch(0, 520)
+        cards.setColumnStretch(1, 548)
         outer.addLayout(cards)
         outer.addStretch()
         self.stacked_widget.addWidget(widget)
+        self._update_profile_layout()
 
     def create_add_screen(self):
         widget = QWidget()
@@ -5405,6 +5517,12 @@ class StudentApp(QMainWindow):
         try:
             full_status, short_status, _status_token = self._status_style(s.get("status"))
             inactive = (full_status != "Active")
+            grade_label = self.student_service.format_grade_label(s.get("grade"))
+            display_status = (
+                "Graduating"
+                if full_status == "Active" and grade_label == "Graduating"
+                else full_status
+            )
             
             # 1. Update Buttons and Status
             master_status = s.get("_status_source") == "masterlist"
@@ -5428,13 +5546,11 @@ class StudentApp(QMainWindow):
                 "Active": "active",
                 "Inactive/Removed": "inactive",
                 "Graduated": "graduated",
-            }.get(full_status, "inactive")
-            self.lbl_profile_status.setText(full_status)
+                "Graduating": "graduated",
+            }.get(display_status, "inactive")
+            self.lbl_profile_status.setText(display_status)
             self.lbl_profile_status.setProperty("status", status_key)
             self.lbl_profile_status.setStyleSheet("")
-            self.profile_summary_accent.setProperty("status", status_key)
-            self.profile_summary_accent.style().unpolish(self.profile_summary_accent)
-            self.profile_summary_accent.style().polish(self.profile_summary_accent)
             self.profile_summary_accent.setProperty("status", status_key)
             self.profile_summary_accent.style().unpolish(self.profile_summary_accent)
             self.profile_summary_accent.style().polish(self.profile_summary_accent)
@@ -5442,7 +5558,22 @@ class StudentApp(QMainWindow):
             self.lbl_profile_status.style().polish(self.lbl_profile_status)
 
             # 2. Update Header Name
-            self.lbl_profile_name.setText(f"{s.get('last_name', '')}, {s.get('first_name', '')}")
+            gender = " ".join(str(s.get("gender") or "").strip().split()).casefold()
+            gender_suffix = (
+                " (M)" if gender in {"m", "male"}
+                else " (F)" if gender in {"f", "female"}
+                else ""
+            )
+            display_name = ", ".join(
+                part for part in (
+                    str(s.get("last_name") or "").strip(),
+                    str(s.get("first_name") or "").strip(),
+                )
+                if part
+            )
+            self.lbl_profile_name.setText(
+                f"{display_name or 'Student name'}{gender_suffix}"
+            )
             self.profile_meta_label.setText(
                 f"{s.get('area') or 'Area not set'}  /  "
                 f"{s.get('sponsor') or 'Sponsor not set'}"
@@ -5456,14 +5587,20 @@ class StudentApp(QMainWindow):
             ]
             
             for field in fields:
+                if field not in self.profile_data_labels:
+                    continue
                 val = s.get(field)
                 # Ensure we handle None or empty strings gracefully
-                display_text = str(val).strip() if val and str(val).strip() else "--"
+                display_text = (
+                    str(val).strip()
+                    if val and str(val).strip()
+                    else "Not set"
+                )
                 self.profile_data_labels[field].setText(display_text)
                 self.profile_data_labels[field].setAccessibleDescription(
                     f"{field.replace('_', ' ').title()}: {display_text}"
                 )
-            self.profile_data_labels["support_status"].setText(full_status)
+            self.profile_data_labels["support_status"].setText(display_status)
             self.profile_data_labels["school_year"].setText(
                 self._current_school_year()
             )
@@ -5471,6 +5608,11 @@ class StudentApp(QMainWindow):
             self.remarks_edit.setPlainText(s.get("remarks") or "")
             self.remarks_display.setText(
                 (s.get("remarks") or "").strip() or "No office notes recorded."
+            )
+            self.profile_next_action_copy.setText(
+                "Assign a sponsor or record why one is not required."
+                if not str(s.get("sponsor") or "").strip()
+                else "Review during the next office follow-up."
             )
 
             photo_url = s.get("photo_url")
@@ -5556,7 +5698,10 @@ class StudentApp(QMainWindow):
                 w = label.width() or 140
                 h = label.height() or 170
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                label.setPixmap(self._scale_cover(pix, w, h))
+                scaled = self._scale_cover(pix, w, h)
+                if label.objectName() == "ProfileAvatar":
+                    scaled = self._circle_crop(scaled, w, h)
+                label.setPixmap(scaled)
             else:
                 label.clear()
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -5582,11 +5727,27 @@ class StudentApp(QMainWindow):
             scaled = scaled.copy(x, y, w, h)
         return scaled
 
+    @staticmethod
+    def _circle_crop(pixmap: QPixmap, w: int, h: int) -> QPixmap:
+        """Clip profile photography to the circular Figma avatar shape."""
+        result = QPixmap(w, h)
+        result.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        clip = QPainterPath()
+        clip.addEllipse(QRectF(0, 0, w, h))
+        painter.setClipPath(clip)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.end()
+        return result
+
     def _set_photo_local(self, label, path):
         if path and os.path.exists(path):
             w = label.width() or 140
             h = label.height() or 170
             pix = self._scale_cover(QPixmap(path), w, h)
+            if label.objectName() == "ProfileAvatar":
+                pix = self._circle_crop(pix, w, h)
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setPixmap(pix)
         else:
@@ -6405,6 +6566,7 @@ class StudentApp(QMainWindow):
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    register_app_fonts()
     logo_path = resource_path(LOGO_ASSET)
     if os.path.exists(logo_path):
         app.setWindowIcon(QIcon(logo_path))

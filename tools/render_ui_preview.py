@@ -48,6 +48,21 @@ def build_sample_students():
             "photo_url": f"https://example.test/photo-{index}.jpg",
             "sheet_synced_at": synced_at,
         })
+        if index == 1:
+            rows[-1].update({
+                "last_name": "Pajaron",
+                "first_name": "Jovanie",
+                "gender": "Male",
+                "grade": "Graduating",
+                "area": "Alabang",
+                "sponsor": "",
+                "city": "Muntinlupa",
+                "course": "STEM",
+                "remarks": (
+                    "Preparing graduation requirements. Sponsor assignment "
+                    "still needs review."
+                ),
+            })
     for index in range(1, 29):
         rows[index - 1]["photo_url"] = ""
     for index in range(1, 11):
