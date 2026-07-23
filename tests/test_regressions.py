@@ -62,6 +62,7 @@ from office_app.ui.views.student_list_model import (
     StudentListModel,
 )
 from office_app.ui.views.student_list_view import StudentListView
+from office_app.ui.views.settings_figma_view import SettingsView
 from tools.import_manila_students import parse_expenses, split_name
 
 
@@ -228,6 +229,19 @@ class ButtonDensityRegressionTests(unittest.TestCase):
         )
         self.assertGreater(button.maximumWidth(), button.minimumWidth())
 
+    def test_dynamic_settings_actions_never_shrink_below_their_text(self):
+        replace = ActionButton("Add token", variant="secondary")
+        sync = ActionButton("Sync now")
+        view = SimpleNamespace(
+            replace_token_button=replace,
+            sync_now_button=sync,
+        )
+
+        SettingsView._fit_sync_action_buttons(view)
+
+        self.assertGreaterEqual(replace.minimumWidth(), replace.sizeHint().width())
+        self.assertGreaterEqual(sync.minimumWidth(), sync.sizeHint().width())
+
 
 class ExpenseLedgerAccessibilityTests(unittest.TestCase):
     def setUp(self):
@@ -275,6 +289,32 @@ class ExpenseLedgerAccessibilityTests(unittest.TestCase):
         self.assertTrue(operations_panel.isHidden())
         self.assertEqual("Show budget and entry", focus_button.text())
         self.assertGreaterEqual(ledger.minimumHeight(), 580)
+
+    def test_expense_delete_action_has_centered_vertical_clearance(self):
+        table = QTableWidget(0, 5)
+        table.resize(720, 220)
+        view = SimpleNamespace(
+            expenses_table=table,
+            delete_expense=lambda _expense_id: None,
+        )
+        StudentApp._add_expense_to_table(
+            view,
+            {
+                "id": "expense-1",
+                "description": "Transport allowance",
+                "amount": 400,
+                "date": "2026-07-15",
+                "school_year": "2026-2027",
+            },
+        )
+        table.show()
+        QApplication.processEvents()
+        action_cell = table.cellWidget(0, 4)
+        button = action_cell.findChild(QPushButton)
+
+        self.assertEqual(56, table.rowHeight(0))
+        self.assertEqual(40, button.height())
+        self.assertGreaterEqual(action_cell.height() - button.height(), 10)
 
 
 class _StudentQuery:

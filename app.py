@@ -1747,8 +1747,8 @@ class StudentApp(QMainWindow):
         self.header_actions_layout.setSpacing(8)
         if profile_header:
             self.header_secondary_button.setFixedWidth(126)
-            self.header_profile_photo_button.setFixedSize(106, 38)
-            self.header_profile_expenses_button.setFixedSize(92, 38)
+            self.header_profile_photo_button.setFixedSize(106, 40)
+            self.header_profile_expenses_button.setFixedSize(94, 40)
             self.header_add_button.setFixedWidth(92)
 
     @staticmethod
@@ -1762,7 +1762,7 @@ class StudentApp(QMainWindow):
         button.setProperty("variant", variant)
         button.style().unpolish(button)
         button.style().polish(button)
-        set_content_hugging_button(button, height=38)
+        set_content_hugging_button(button, height=40)
 
     def _nav_button_for_page(self, index: int):
         """Return the navigation owner for a workspace page.
@@ -4692,7 +4692,7 @@ class StudentApp(QMainWindow):
             4,
             QHeaderView.ResizeMode.Fixed,
         )
-        self.expenses_table.setColumnWidth(4, 96)
+        self.expenses_table.setColumnWidth(4, 100)
         self.expenses_table.horizontalHeader().setStretchLastSection(False)
         self.expenses_table.horizontalHeader().setMinimumHeight(44)
         self.expenses_table.verticalHeader().setVisible(False)
@@ -4714,8 +4714,8 @@ class StudentApp(QMainWindow):
             "Expense description, amount, date, school year, and delete action."
         )
         self.expenses_table.setMinimumHeight(280)
-        self.expenses_table.verticalHeader().setMinimumSectionSize(48)
-        self.expenses_table.verticalHeader().setDefaultSectionSize(48)
+        self.expenses_table.verticalHeader().setMinimumSectionSize(56)
+        self.expenses_table.verticalHeader().setDefaultSectionSize(56)
         self.expenses_empty_state = EmptyState(
             "No expenses recorded",
             "Add the first expense for this school year using the form above.",
@@ -6927,7 +6927,7 @@ class StudentApp(QMainWindow):
     def _add_expense_to_table(self, exp):
         row_idx = self.expenses_table.rowCount()
         self.expenses_table.insertRow(row_idx)
-        self.expenses_table.setRowHeight(row_idx, 48)
+        self.expenses_table.setRowHeight(row_idx, 56)
         description_item = QTableWidgetItem(exp.get("description", ""))
         description_item.setToolTip(description_item.text())
         self.expenses_table.setItem(row_idx, 0, description_item)
@@ -6942,7 +6942,7 @@ class StudentApp(QMainWindow):
         self.expenses_table.setItem(row_idx, 3, QTableWidgetItem(exp.get("school_year") or ""))
         del_btn = ActionButton("Delete", variant="danger")
         del_btn.setProperty("density", "compact")
-        del_btn.setMinimumHeight(40)
+        set_content_hugging_button(del_btn, min_width=64, height=40)
         del_btn.setAccessibleName(
             "Delete expense "
             f"{description_item.text()}, PHP {amount:,.2f}, "
@@ -6954,9 +6954,12 @@ class StudentApp(QMainWindow):
         action_cell = QWidget()
         action_cell.setObjectName("TableActionCell")
         action_layout = QHBoxLayout(action_cell)
-        action_layout.setContentsMargins(4, 4, 4, 4)
+        action_layout.setContentsMargins(6, 6, 6, 6)
         action_layout.setSpacing(0)
-        action_layout.addWidget(del_btn)
+        action_layout.addWidget(
+            del_btn,
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
         self.expenses_table.setCellWidget(row_idx, 4, action_cell)
 
     def save_budget(self):

@@ -308,20 +308,20 @@ class SettingsView(QWidget):
         layout.addWidget(panel)
         layout.addSpacing(18)
         meta = QHBoxLayout()
-        meta.setSpacing(20)
+        meta.setSpacing(12)
         self.sync_last_value = self._meta_column(
             meta, "Last successful sync", "No successful sync recorded", 2
         )
         self.sync_source_value = self._meta_column(
             meta, "Source", "SSM Masterlist / Current workbook", 2
         )
-        meta.addStretch(1)
         self.replace_token_button = ActionButton("Replace token", variant="secondary")
         self.sync_now_button = ActionButton("Sync now")
         for button in (self.replace_token_button, self.sync_now_button):
             button.setProperty("density", "compact")
             set_content_hugging_button(button, height=38)
             meta.addWidget(button, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self._fit_sync_action_buttons()
         self.replace_token_button.clicked.connect(self.prompt_replace_token)
         self.sync_now_button.clicked.connect(self.sync_now_requested.emit)
         layout.addLayout(meta)
@@ -344,6 +344,8 @@ class SettingsView(QWidget):
         caption.setObjectName("SettingsMetaLabel")
         value = QLabel(value_text)
         value.setObjectName("SettingsMetaValue")
+        value.setWordWrap(True)
+        value.setMinimumWidth(0)
         column.addWidget(caption)
         column.addWidget(value)
         parent.addLayout(column, stretch)
@@ -420,6 +422,19 @@ class SettingsView(QWidget):
         )
         self.replace_token_button.setText("Replace token" if configured else "Add token")
         self.sync_now_button.setEnabled(configured)
+        self._fit_sync_action_buttons()
+
+    def _fit_sync_action_buttons(self):
+        """Keep changing action labels wider than their rendered text."""
+        for button in (
+            getattr(self, "replace_token_button", None),
+            getattr(self, "sync_now_button", None),
+        ):
+            if button is None:
+                continue
+            button.ensurePolished()
+            button.setMinimumWidth(max(52, button.sizeHint().width()))
+            button.updateGeometry()
 
     def set_connection_state(self, text, state, checked_at=None):
         self.database_badge.set_state(state, text)
@@ -438,12 +453,16 @@ class SettingsView(QWidget):
         self._set_sync_token_status(configured)
         self.sync_token_badge.set_state("success" if configured else "warning", state)
         suffix = f"  •  {active_rows} active rows" if active_rows is not None else ""
-        self.sync_last_value.setText(f"{last_sync}{suffix}")
+        last_sync_text = f"{last_sync}{suffix}"
+        self.sync_last_value.setText(last_sync_text)
+        self.sync_last_value.setToolTip(last_sync_text)
         self.sync_source_value.setText(source)
+        self.sync_source_value.setToolTip(source)
 
     def set_sync_busy(self, busy):
         self.sync_now_button.setEnabled(not busy and bool(get_sheet_sync_token()))
         self.sync_now_button.setText("Syncing…" if busy else "Sync now")
+        self._fit_sync_action_buttons()
 
     def set_compact(self, compact):
         """Trim vertical cadence at the supported 980x700 window."""

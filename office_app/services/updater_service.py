@@ -7,11 +7,11 @@ import threading
 
 class UpdaterService:
     # Change this whenever you compile a new .exe!
-    CURRENT_VERSION = "1.2.9"
+    CURRENT_VERSION = "1.3.0"
     CURRENT_RELEASE_NOTES = (
-        "More compact dashboard",
-        "Personalized operator greeting",
-        "Reduced-motion-aware name animation",
+        "Unclipped expense actions",
+        "Safer table row spacing",
+        "Responsive settings actions",
     )
     MIN_INSTALLER_BYTES = 40 * 1024 * 1024
 
