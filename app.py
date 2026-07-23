@@ -35,6 +35,7 @@ from PyQt6.QtGui import (
 
 from supabase import Client
 from office_app.app_config import (
+    APP_ICON_ASSET,
     KEEPALIVE_INTERVAL_MS,
     LOGO_ASSET,
     USERS,
@@ -528,9 +529,9 @@ class StartupDialog(QDialog):
             "YWAMBalut", "SSMStudentProfilingSystem"
         ).value("reduce_motion", False, type=bool)
         self.setWindowTitle("YWAM Balut SSM")
-        logo_path = resource_path(LOGO_ASSET)
-        if os.path.exists(logo_path):
-            self.setWindowIcon(QIcon(logo_path))
+        icon_path = resource_path(APP_ICON_ASSET)
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.setFixedSize(640, 420)
         self.setWindowFlags(
             Qt.WindowType.Dialog |
@@ -1397,9 +1398,9 @@ class StudentApp(QMainWindow):
         self._dashboard_revealed = False
 
         self.setWindowTitle("SSM Student Profiling System")
-        logo_path = resource_path(LOGO_ASSET)
-        if os.path.exists(logo_path):
-            self.setWindowIcon(QIcon(logo_path))
+        icon_path = resource_path(APP_ICON_ASSET)
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.resize(1100, 750)
         self.setMinimumSize(980, 680)
 
@@ -2762,7 +2763,7 @@ class StudentApp(QMainWindow):
         pace_label = QLabel("Monthly pace")
         pace_label.setObjectName("Caption")
         self.dashboard_monthly_pace = StrongBodyLabel("PHP --")
-        self.dashboard_budget_health = StatusBadge("No allocation", state="neutral")
+        self.dashboard_budget_health = StatusBadge("Unallocated", state="neutral")
         budget_footer.addWidget(pace_label)
         budget_footer.addWidget(self.dashboard_monthly_pace)
         budget_footer.addStretch()
@@ -3354,7 +3355,7 @@ class StudentApp(QMainWindow):
             self.dashboard_budget_percent.setText(f"{usage['percent']}% used")
             self.dashboard_budget_remaining.setText(
                 f"PHP {usage['remaining']:,.0f} remaining"
-                if total_budget > 0 else "No budget allocated"
+                if total_budget > 0 else "Budget unallocated this year"
             )
             self.dashboard_budget_scale_max.setText(f"PHP {total_budget:,.0f}")
             elapsed_months = max(1, ((datetime.now().month - 6) % 12) + 1)
@@ -3374,8 +3375,8 @@ class StudentApp(QMainWindow):
                 "success": "Healthy",
                 "warning": "Watch closely",
                 "danger": "Over budget",
-                "neutral": "No allocation",
-            }.get(state, "No allocation")
+                "neutral": "Unallocated",
+            }.get(state, "Unallocated")
             self.dashboard_budget_health.set_state(state, health_text)
 
             progress_counts = {"complete": 0, "progress": 0, "review": 0}
@@ -3462,7 +3463,7 @@ class StudentApp(QMainWindow):
             budget = self.expense_service.budget_card_status(
                 summaries.get(student.get("id"))
             )
-            budget_text = budget.get("detail") or "No budget allocated"
+            budget_text = budget.get("detail") or "Unallocated this year"
             updated = str(student.get("sheet_synced_at") or "").strip()
             if updated:
                 try:
@@ -3980,7 +3981,7 @@ class StudentApp(QMainWindow):
         budget_metric.setSpacing(5)
         budget_label = QLabel("BUDGET")
         budget_label.setObjectName("ProfileMetricLabel")
-        self.profile_budget_label = QLabel("No budget allocated")
+        self.profile_budget_label = QLabel("Unallocated this year")
         self.profile_budget_label.setObjectName("ProfileBudgetValue")
         self.profile_budget_bar = NativeProgressBar()
         self.profile_budget_bar.setObjectName("BudgetProgress")
@@ -4313,9 +4314,11 @@ class StudentApp(QMainWindow):
         budget_main.setSpacing(8)
 
         budget_hdr = QHBoxLayout()
-        budget_icon_lbl = StrongBodyLabel("Budget allocated")
-        budget_icon_lbl.setObjectName("CardHeading")
-        budget_hdr.addWidget(budget_icon_lbl)
+        self.expense_budget_heading = StrongBodyLabel(
+            f"Budget — {self._current_school_year()}"
+        )
+        self.expense_budget_heading.setObjectName("CardHeading")
+        budget_hdr.addWidget(self.expense_budget_heading)
         budget_hdr.addStretch()
 
         # Edit budget row
@@ -4356,7 +4359,7 @@ class StudentApp(QMainWindow):
         self.budget_bar.setAccessibleDescription("No budget usage loaded")
         budget_main.addWidget(self.budget_bar)
 
-        self.budget_status_lbl = QLabel("No budget allocated for this school year.")
+        self.budget_status_lbl = QLabel("Budget unallocated for this school year.")
         self.budget_status_lbl.setObjectName("BudgetStatus")
         budget_main.addWidget(self.budget_status_lbl)
         layout.addWidget(budget_card)
@@ -5874,7 +5877,7 @@ class StudentApp(QMainWindow):
 
             budget = self.expense_service.budget_card_status(financial_summary)
             self.profile_budget_label.setText(
-                budget.get("detail") or budget.get("title") or "No budget allocated"
+                budget.get("detail") or budget.get("title") or "Unallocated this year"
             )
             self.profile_budget_bar.setProperty(
                 "state", budget.get("state", "neutral")
@@ -6503,6 +6506,12 @@ class StudentApp(QMainWindow):
         request_id = self._expense_request
         student_id = self.current_student_id
         sy_filter = self.exp_school_year.currentText()
+        budget_year = (
+            self._current_school_year()
+            if sy_filter == ExpenseService.ALL_YEARS
+            else sy_filter
+        )
+        self.expense_budget_heading.setText(f"Budget — {budget_year}")
         self.expenses_table.setRowCount(0)
         self.expenses_empty_state.title_label.setText("Updating expense history…")
         self.expenses_empty_state.description_label.setText(
@@ -6517,15 +6526,27 @@ class StudentApp(QMainWindow):
         self.add_expense_btn.setEnabled(False)
 
         def do_work():
-            summary = self.expense_service.get_financial_summary(student_id, sy_filter)
             expenses = self.expense_service.list_expenses(student_id, sy_filter)
+            summary = self.expense_service.get_financial_summary(
+                student_id,
+                budget_year,
+            )
+            budget_expenses = (
+                self.expense_service.expenses_for_school_year(
+                    expenses,
+                    budget_year,
+                )
+                if sy_filter == ExpenseService.ALL_YEARS
+                else expenses
+            )
             return (
                 self.expense_service.reconcile_summary(
                     summary,
-                    expenses,
-                    sy_filter,
+                    budget_expenses,
+                    budget_year,
                 ),
                 expenses,
+                budget_year,
             )
 
         def on_done(result):
@@ -6535,10 +6556,11 @@ class StudentApp(QMainWindow):
                 or sy_filter != self.exp_school_year.currentText()
             ):
                 return
-            summary_data, expenses_data = result
+            summary_data, expenses_data, budget_year = result
 
             # Update budget display
             budget_info = self.expense_service.budget_usage(summary_data)
+            self.expense_budget_heading.setText(f"Budget — {budget_year}")
             animate_progress(
                 self.budget_bar,
                 budget_info["percent"],
@@ -6811,9 +6833,9 @@ class StudentApp(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     register_app_fonts()
-    logo_path = resource_path(LOGO_ASSET)
-    if os.path.exists(logo_path):
-        app.setWindowIcon(QIcon(logo_path))
+    icon_path = resource_path(APP_ICON_ASSET)
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     # 1. Create the client, guiding normal users through one-time setup when needed.
     while True:

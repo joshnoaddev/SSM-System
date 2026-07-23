@@ -21,6 +21,7 @@ SYNC_TOKEN_CONFIG_KEY = "sheet_sync_token_protected"
 KEEPALIVE_INTERVAL_MS = 4 * 24 * 60 * 60 * 1000
 PHOTO_BUCKET = "student-photos"
 LOGO_ASSET = os.path.join("assets", "ssm_logo.png")
+APP_ICON_ASSET = os.path.join("assets", "ssm_app_icon.png")
 USERS = ["Joshua", "Mary Rose", "Marylou"]
 
 

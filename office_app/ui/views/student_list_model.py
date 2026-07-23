@@ -46,7 +46,7 @@ class StudentListModel(QAbstractListModel):
             budget_text = (
                 f"Budget {budget.get('title')}, {budget.get('detail')}"
                 if budget.get("allocated")
-                else "No budget allocated"
+                else "Unallocated this year"
             )
             return (
                 f"Open student profile. {completion}% complete. "
@@ -324,7 +324,7 @@ class StudentCardDelegate(QStyledItemDelegate):
         budget = student.get("_budget_status") or {}
         allocated = bool(budget.get("allocated"))
         percent = max(0, min(100, int(budget.get("percent") or 0)))
-        detail = budget.get("detail") or "No budget allocated"
+        detail = budget.get("detail") or "Unallocated this year"
         state_color = self._budget_color(budget.get("state"))
         label_color = theme_color("text_primary") if allocated else theme_color("text_disabled")
         self._elided_text(

@@ -398,6 +398,17 @@ class RegressionTests(unittest.TestCase):
             UpdaterService.next_release_version("1.0.24"),
         )
 
+    def test_windows_build_declares_icon_and_publisher_metadata(self):
+        root = Path(__file__).resolve().parents[1]
+        spec = (root / "SSM_Student_Profiling.spec").read_text(encoding="utf-8")
+        metadata = (root / "version_info.txt").read_text(encoding="utf-8")
+
+        self.assertIn("icon='assets/ssm_app_icon.ico'", spec)
+        self.assertIn("version='version_info.txt'", spec)
+        self.assertIn("Joshua Ariaga", metadata)
+        self.assertIn("SSM Student Support Management", metadata)
+        self.assertTrue((root / app_config.APP_ICON_ASSET).is_file())
+
     def test_fast_background_tasks_expose_completion_state(self):
         task = BackgroundTask(lambda: "ready")
 
@@ -413,7 +424,11 @@ class RegressionTests(unittest.TestCase):
         status = ExpenseService.budget_card_status(None)
 
         self.assertFalse(status["allocated"])
-        self.assertEqual(status["title"], "No budget allocated")
+        self.assertEqual(status["title"], "Unallocated this year")
+        self.assertEqual(
+            status["message"],
+            "Budget unallocated for this school year.",
+        )
         self.assertEqual(status["percent"], 0)
 
     def test_budget_usage_with_expenses_but_no_budget_is_neutral(self):
@@ -424,7 +439,7 @@ class RegressionTests(unittest.TestCase):
         })
 
         self.assertFalse(status["allocated"])
-        self.assertEqual(status["title"], "No budget allocated")
+        self.assertEqual(status["title"], "Unallocated this year")
         self.assertEqual(status["state"], "neutral")
         self.assertFalse(status["over_budget"])
 
@@ -458,6 +473,20 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(3525, summary["remaining_balance"])
         self.assertEqual(21, usage["percent"])
         self.assertIn("PHP 975.00 of PHP 4,500.00", usage["message"])
+
+    def test_all_year_history_can_feed_a_current_year_budget_snapshot(self):
+        rows = [
+            {"school_year": "2025-2026", "amount": 575},
+            {"school_year": "2026-2027", "amount": 400},
+            {"school_year": "2026-2027", "amount": 250},
+        ]
+
+        current_rows = ExpenseService.expenses_for_school_year(
+            rows,
+            "2026-2027",
+        )
+
+        self.assertEqual(650, ExpenseService.calculate_total(current_rows))
 
     def test_financial_summaries_match_equivalent_uuid_and_text_ids(self):
         student_id = UUID("8a88f7c1-3287-4f75-856c-8f429db240e8")

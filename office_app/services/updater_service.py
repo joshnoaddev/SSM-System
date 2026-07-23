@@ -7,11 +7,11 @@ import threading
 
 class UpdaterService:
     # Change this whenever you compile a new .exe!
-    CURRENT_VERSION = "1.2.6"
+    CURRENT_VERSION = "1.2.7"
     CURRENT_RELEASE_NOTES = (
-        "Filter by sponsor name",
-        "Show all expense years",
-        "Guided startup checks",
+        "Sharper Windows app icon",
+        "Publisher details added",
+        "Clear yearly budget status",
     )
     MIN_INSTALLER_BYTES = 40 * 1024 * 1024
 

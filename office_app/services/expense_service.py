@@ -143,6 +143,19 @@ class ExpenseService:
                 continue
         return total
 
+    @staticmethod
+    def expenses_for_school_year(
+        expenses: Iterable[Dict[str, Any]],
+        school_year: str,
+    ) -> List[Dict[str, Any]]:
+        """Return the expense snapshot that belongs to one budget period."""
+        target = str(school_year or "").strip().casefold()
+        return [
+            expense
+            for expense in expenses
+            if str(expense.get("school_year") or "").strip().casefold() == target
+        ]
+
     @classmethod
     def reconcile_summary(
         cls,
@@ -179,7 +192,7 @@ class ExpenseService:
             return {
                 "budget": 0, "spent": 0, "percent": 0, "remaining": 0,
                 "over_budget": False, "state": "neutral",
-                "message": "No financial activity is available.",
+                "message": "Budget unallocated for this school year.",
             }
 
         spent = summary.get("total_expenses", 0)
@@ -190,7 +203,7 @@ class ExpenseService:
                 "budget": budget, "spent": spent, "percent": 0,
                 "remaining": remaining, "over_budget": False,
                 "state": "neutral",
-                "message": "No budget allocated for this school year.",
+                "message": "Budget unallocated for this school year.",
             }
 
         over_budget = remaining < 0
@@ -226,7 +239,7 @@ class ExpenseService:
             return {
                 **usage,
                 "allocated": False,
-                "title": "No budget allocated",
+                "title": "Unallocated this year",
                 "detail": "",
             }
         return {
