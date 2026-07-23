@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QComboBox, QStatusBar, QDialog, QTabWidget,
     QProgressBar, QProgressDialog, QFrame, QGridLayout, QScrollBar, QDateEdit,
     QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QSizePolicy, QStyle,
-    QMenu, QSpacerItem
+    QMenu, QSpacerItem, QBoxLayout
 )
 from PyQt6.QtWidgets import (
     QComboBox as NativeComboBox,
@@ -1787,7 +1787,11 @@ class StudentApp(QMainWindow):
         grid = getattr(self, "expense_add_grid", None)
         if grid is None:
             return
-        compact = self.width() < 1120
+        side_by_side = (
+            hasattr(self, "expense_workspace_layout")
+            and self.width() >= 1480
+        )
+        compact = self.width() < 1120 or side_by_side
         card = self.expense_add_card
         card.setFixedHeight(184 if compact else 118)
         widgets = (
@@ -1835,6 +1839,122 @@ class StudentApp(QMainWindow):
             grid.setColumnStretch(2, 1)
             grid.setColumnStretch(3, 1)
             self.exp_date.setMinimumWidth(190)
+        if hasattr(self, "expense_search"):
+            self.expense_search.setFixedWidth(280 if compact else 380)
+        if hasattr(self, "expense_history_card"):
+            focused = (
+                hasattr(self, "expense_focus_btn")
+                and self.expense_focus_btn.isChecked()
+            )
+            self.expense_history_card.setMinimumHeight(
+                580 if focused else (520 if side_by_side else 400)
+            )
+        self._relayout_expense_workspace()
+
+    def _relayout_expense_workspace(self) -> None:
+        workspace = getattr(self, "expense_workspace_layout", None)
+        if workspace is None:
+            return
+        side_by_side = self.width() >= 1480
+        workspace.setDirection(
+            QBoxLayout.Direction.LeftToRight
+            if side_by_side
+            else QBoxLayout.Direction.TopToBottom
+        )
+        workspace.setStretch(0, 5 if side_by_side else 0)
+        workspace.setStretch(1, 8 if side_by_side else 1)
+        self.expense_operations_panel.setMinimumWidth(480 if side_by_side else 0)
+        self.expense_operations_panel.setMaximumWidth(
+            500 if side_by_side else 16777215
+        )
+        self.budget_input.setMaximumWidth(150 if side_by_side else 200)
+        self._relayout_expense_budget_header(side_by_side)
+        self._relayout_expense_budget_figures(side_by_side)
+        if not self.expense_focus_btn.isChecked():
+            self.expense_operations_panel.show()
+
+    def _relayout_expense_budget_header(self, side_by_side: bool) -> None:
+        header = getattr(self, "expense_budget_header_layout", None)
+        if header is None:
+            return
+        while header.count():
+            header.takeAt(0)
+        if side_by_side:
+            header.setDirection(QBoxLayout.Direction.TopToBottom)
+            header.setSpacing(8)
+            header.addWidget(self.expense_budget_heading)
+            header.addWidget(self.expense_budget_actions)
+        else:
+            header.setDirection(QBoxLayout.Direction.LeftToRight)
+            header.setSpacing(0)
+            header.addWidget(self.expense_budget_heading)
+            header.addStretch()
+            header.addWidget(self.expense_budget_actions)
+
+    def _relayout_expense_budget_figures(self, side_by_side: bool) -> None:
+        figures = getattr(self, "expense_budget_figures_layout", None)
+        if figures is None:
+            return
+        while figures.count():
+            figures.takeAt(0)
+        if side_by_side:
+            figures.setDirection(QBoxLayout.Direction.TopToBottom)
+            figures.setSpacing(2)
+            figures.addWidget(self.expense_budget_amount_display)
+            figures.addWidget(self.expense_spent_display)
+            figures.addWidget(self.expense_remaining_display)
+            self.expense_budget_card.setFixedHeight(228)
+        else:
+            figures.setDirection(QBoxLayout.Direction.LeftToRight)
+            figures.setSpacing(0)
+            figures.addWidget(self.expense_budget_amount_display)
+            figures.addSpacing(12)
+            figures.addWidget(self.expense_spent_display)
+            figures.addStretch()
+            figures.addWidget(self.expense_remaining_display)
+            self.expense_budget_card.setFixedHeight(150)
+
+    def _toggle_expense_history_focus(self, focused: bool) -> None:
+        """Give expense review the full page without losing entry controls."""
+        self.expense_operations_panel.setVisible(not focused)
+        self.expense_focus_btn.setText(
+            "Show budget and entry" if focused else "Focus on history"
+        )
+        self.expense_focus_btn.setAccessibleName(
+            "Show budget and expense entry"
+            if focused
+            else "Expand expense history"
+        )
+        side_by_side = self.width() >= 1480
+        self.expense_history_card.setMinimumHeight(
+            580 if focused else (520 if side_by_side else 400)
+        )
+        if focused:
+            QTimer.singleShot(0, self.expenses_table.setFocus)
+
+    def _filter_expense_history(self, text: str = "") -> None:
+        """Filter the loaded ledger without making another database request."""
+        query = str(text or "").strip().casefold()
+        total_rows = self.expenses_table.rowCount()
+        visible_rows = 0
+        for row in range(total_rows):
+            values = []
+            for column in range(4):
+                item = self.expenses_table.item(row, column)
+                values.append(item.text() if item is not None else "")
+            matches = not query or query in " ".join(values).casefold()
+            self.expenses_table.setRowHidden(row, not matches)
+            visible_rows += int(matches)
+        self.expense_count_label.setText(
+            (
+                f"{visible_rows} of {total_rows} records"
+                if query
+                else f"{total_rows} record{'s' if total_rows != 1 else ''}"
+            )
+        )
+        self.expense_count_label.setAccessibleDescription(
+            f"{visible_rows} visible expense records out of {total_rows}"
+        )
 
     def _update_profile_layout(self) -> None:
         """Preserve the Figma profile geometry while keeping 980px usable."""
@@ -4276,6 +4396,7 @@ class StudentApp(QMainWindow):
 
         # School year selector
         sy_card = QFrame()
+        self.expense_context_card = sy_card
         sy_card.setObjectName("ExpenseContextBar")
         sy_card.setFixedHeight(56)
         sy_layout = QHBoxLayout(sy_card)
@@ -4307,13 +4428,15 @@ class StudentApp(QMainWindow):
 
         # ── Budget card ────────────────────────────────────────────────────
         budget_card = Card()
+        self.expense_budget_card = budget_card
         budget_card.setProperty("tone", "success")
         budget_card.setFixedHeight(150)
         budget_main = QVBoxLayout(budget_card)
         budget_main.setContentsMargins(16, 16, 16, 16)
         budget_main.setSpacing(8)
 
-        budget_hdr = QHBoxLayout()
+        budget_hdr = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.expense_budget_header_layout = budget_hdr
         self.expense_budget_heading = StrongBodyLabel(
             f"Budget — {self._current_school_year()}"
         )
@@ -4330,18 +4453,24 @@ class StudentApp(QMainWindow):
         self.save_budget_btn = PrimaryPushButton("Save budget")
         set_content_hugging_button(self.save_budget_btn)
         self.save_budget_btn.clicked.connect(self.save_budget)
-        budget_hdr.addWidget(self.budget_input)
-        budget_hdr.addWidget(self.save_budget_btn)
+        self.expense_budget_actions = QWidget()
+        budget_actions_layout = QHBoxLayout(self.expense_budget_actions)
+        budget_actions_layout.setContentsMargins(0, 0, 0, 0)
+        budget_actions_layout.setSpacing(8)
+        budget_actions_layout.addWidget(self.budget_input)
+        budget_actions_layout.addWidget(self.save_budget_btn)
+        budget_hdr.addWidget(self.expense_budget_actions)
         budget_main.addLayout(budget_hdr)
 
-        budget_figures = QHBoxLayout()
+        budget_figures = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.expense_budget_figures_layout = budget_figures
         self.expense_budget_amount_display = QLabel("PHP 0.00")
         self.expense_budget_amount_display.setObjectName("DashboardHeroValue")
         self.expense_spent_display = StrongBodyLabel("PHP 0.00 spent")
         self.expense_remaining_display = QLabel("PHP 0.00 remaining")
         self.expense_remaining_display.setObjectName("Caption")
         budget_figures.addWidget(self.expense_budget_amount_display)
-        budget_figures.addSpacing(28)
+        budget_figures.addSpacing(12)
         budget_figures.addWidget(self.expense_spent_display)
         budget_figures.addStretch()
         budget_figures.addWidget(self.expense_remaining_display)
@@ -4362,7 +4491,6 @@ class StudentApp(QMainWindow):
         self.budget_status_lbl = QLabel("Budget unallocated for this school year.")
         self.budget_status_lbl.setObjectName("BudgetStatus")
         budget_main.addWidget(self.budget_status_lbl)
-        layout.addWidget(budget_card)
 
         # Add expense card
         add_card = Card()
@@ -4420,25 +4548,72 @@ class StudentApp(QMainWindow):
         add_grid.setColumnStretch(2, 1)
         add_grid.setColumnStretch(3, 1)
         add_layout.addLayout(add_grid)
-        layout.addWidget(add_card)
-        self._relayout_expense_entry()
+        self.expense_operations_panel = QWidget()
+        self.expense_operations_panel.setObjectName("ExpenseOperationsPanel")
+        operations_layout = QVBoxLayout(self.expense_operations_panel)
+        operations_layout.setContentsMargins(0, 0, 0, 0)
+        operations_layout.setSpacing(20)
+        operations_layout.addWidget(budget_card)
+        operations_layout.addWidget(add_card)
+        operations_layout.addStretch()
 
         # Expenses table
         table_card = Card()
-        table_card.setFixedHeight(252)
+        self.expense_history_card = table_card
+        table_card.setMinimumHeight(430)
+        table_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(16, 16, 16, 16)
         table_layout.setSpacing(8)
         history_header = QHBoxLayout()
         expense_history_title = StrongBodyLabel("Expense history")
         expense_history_title.setObjectName("CardHeading")
+        self.expense_count_label = QLabel("0 records")
+        self.expense_count_label.setObjectName("Caption")
+        self.expense_count_label.setAccessibleName("Visible expense record count")
         self.total_label = QLabel("Total: PHP 0.00")
         self.total_label.setObjectName("TotalLabel")
         self.total_label.setAccessibleName("Expense total")
         history_header.addWidget(expense_history_title)
+        history_header.addWidget(self.expense_count_label)
         history_header.addStretch()
         history_header.addWidget(self.total_label)
         table_layout.addLayout(history_header)
+
+        history_tools = QHBoxLayout()
+        history_tools.setSpacing(8)
+        self.expense_search = QLineEdit()
+        self.expense_search.setPlaceholderText(
+            "Search descriptions, dates, amounts, or school years"
+        )
+        self.expense_search.setAccessibleName("Search expense history")
+        self.expense_search.setAccessibleDescription(
+            "Filters the currently loaded expense records as you type."
+        )
+        self.expense_search.setClearButtonEnabled(True)
+        self.expense_search.setFixedWidth(380)
+        self.expense_search.setFixedHeight(40)
+        self.expense_search.textChanged.connect(self._filter_expense_history)
+        self.expense_focus_btn = ActionButton(
+            "Focus on history",
+            variant="tertiary",
+        )
+        self.expense_focus_btn.setCheckable(True)
+        self.expense_focus_btn.setAccessibleName("Expand expense history")
+        self.expense_focus_btn.setToolTip(
+            "Hide the budget and entry panels to review more records at once."
+        )
+        self.expense_focus_btn.toggled.connect(
+            self._toggle_expense_history_focus
+        )
+        history_tools.addWidget(self.expense_search)
+        history_tools.addStretch()
+        history_tools.addWidget(self.expense_focus_btn)
+        table_layout.addLayout(history_tools)
+
         self.expenses_table = QTableWidget(0, 5)
         self.expenses_table.setObjectName("ExpensesTable")
         self.expenses_table.setHorizontalHeaderLabels(["Description", "Amount (PHP)", "Date", "School year", ""])
@@ -4446,29 +4621,59 @@ class StudentApp(QMainWindow):
         self.expenses_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.expenses_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.expenses_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.expenses_table.horizontalHeader().setSectionResizeMode(
+            4,
+            QHeaderView.ResizeMode.Fixed,
+        )
+        self.expenses_table.setColumnWidth(4, 96)
         self.expenses_table.horizontalHeader().setStretchLastSection(False)
+        self.expenses_table.horizontalHeader().setMinimumHeight(44)
         self.expenses_table.verticalHeader().setVisible(False)
         self.expenses_table.setAlternatingRowColors(True)
         self.expenses_table.setShowGrid(False)
         self.expenses_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.expenses_table.setSelectionMode(
+            QTableWidget.SelectionMode.SingleSelection
+        )
         self.expenses_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.expenses_table.setMinimumHeight(176)
-        self.expenses_table.verticalHeader().setMinimumSectionSize(40)
-        self.expenses_table.verticalHeader().setDefaultSectionSize(40)
+        self.expenses_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.expenses_table.setVerticalScrollMode(
+            QTableWidget.ScrollMode.ScrollPerPixel
+        )
+        self.expenses_table.setAccessibleName("Expense history ledger")
+        self.expenses_table.setAccessibleDescription(
+            "Expense description, amount, date, school year, and delete action."
+        )
+        self.expenses_table.setMinimumHeight(280)
+        self.expenses_table.verticalHeader().setMinimumSectionSize(48)
+        self.expenses_table.verticalHeader().setDefaultSectionSize(48)
         self.expenses_empty_state = EmptyState(
             "No expenses recorded",
             "Add the first expense for this school year using the form above.",
         )
         self.expenses_empty_state.setAccessibleName("No expenses recorded")
         self.expense_history_stack = QStackedWidget()
-        self.expense_history_stack.setMinimumHeight(176)
+        self.expense_history_stack.setMinimumHeight(280)
         self.expense_history_stack.addWidget(self.expenses_table)
         self.expense_history_stack.addWidget(self.expenses_empty_state)
         self.expense_history_stack.setCurrentWidget(self.expenses_empty_state)
-        table_layout.addWidget(self.expense_history_stack)
-        layout.addWidget(table_card)
+        table_layout.addWidget(self.expense_history_stack, 1)
+        self.expense_workspace = QWidget()
+        self.expense_workspace.setObjectName("ExpenseWorkspace")
+        self.expense_workspace_layout = QBoxLayout(
+            QBoxLayout.Direction.LeftToRight,
+            self.expense_workspace,
+        )
+        self.expense_workspace_layout.setContentsMargins(0, 0, 0, 0)
+        self.expense_workspace_layout.setSpacing(20)
+        self.expense_workspace_layout.addWidget(self.expense_operations_panel)
+        self.expense_workspace_layout.addWidget(table_card, 1)
+        layout.addWidget(self.expense_workspace, 1)
+        self._relayout_expense_workspace()
+        self._relayout_expense_entry()
 
-        layout.addStretch()
         outer_scroll.setWidget(inner)
         w_layout = QVBoxLayout(widget)
         w_layout.setContentsMargins(0, 0, 0, 0)
@@ -6513,6 +6718,7 @@ class StudentApp(QMainWindow):
         )
         self.expense_budget_heading.setText(f"Budget — {budget_year}")
         self.expenses_table.setRowCount(0)
+        self.expense_count_label.setText("Loading records…")
         self.expenses_empty_state.title_label.setText("Updating expense history…")
         self.expenses_empty_state.description_label.setText(
             "Retrieving synchronized budget and expense figures."
@@ -6609,6 +6815,7 @@ class StudentApp(QMainWindow):
             self.expense_history_stack.setCurrentWidget(
                 self.expenses_table if expenses_data else self.expenses_empty_state
             )
+            self._filter_expense_history(self.expense_search.text())
 
             # Update total label
             total = self.expense_service.calculate_total(expenses_data)
@@ -6632,6 +6839,7 @@ class StudentApp(QMainWindow):
             self.save_budget_btn.setText("Save budget")
             self.add_expense_btn.setText("Add expense")
             self.total_label.setText("Total unavailable")
+            self.expense_count_label.setText("Records unavailable")
             self.budget_status_lbl.setText("Budget figures unavailable")
             self.expenses_empty_state.title_label.setText("Expense history unavailable")
             self.expenses_empty_state.description_label.setText(
@@ -6652,7 +6860,7 @@ class StudentApp(QMainWindow):
     def _add_expense_to_table(self, exp):
         row_idx = self.expenses_table.rowCount()
         self.expenses_table.insertRow(row_idx)
-        self.expenses_table.setRowHeight(row_idx, 40)
+        self.expenses_table.setRowHeight(row_idx, 48)
         description_item = QTableWidgetItem(exp.get("description", ""))
         description_item.setToolTip(description_item.text())
         self.expenses_table.setItem(row_idx, 0, description_item)
@@ -6667,12 +6875,19 @@ class StudentApp(QMainWindow):
         self.expenses_table.setItem(row_idx, 3, QTableWidgetItem(exp.get("school_year") or ""))
         del_btn = ActionButton("Delete", variant="danger")
         del_btn.setProperty("density", "compact")
+        del_btn.setMinimumHeight(40)
+        del_btn.setAccessibleName(
+            "Delete expense "
+            f"{description_item.text()}, PHP {amount:,.2f}, "
+            f"{exp.get('date') or 'date not set'}"
+        )
+        del_btn.setToolTip("Delete this expense record")
         expense_id = exp["id"]
         del_btn.clicked.connect(lambda _, e=expense_id: self.delete_expense(e))
         action_cell = QWidget()
         action_cell.setObjectName("TableActionCell")
         action_layout = QHBoxLayout(action_cell)
-        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setContentsMargins(4, 4, 4, 4)
         action_layout.setSpacing(0)
         action_layout.addWidget(del_btn)
         self.expenses_table.setCellWidget(row_idx, 4, action_cell)

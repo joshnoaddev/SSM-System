@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
 )
 from app import StartupDialog, StudentApp
 from office_app import app_config
@@ -225,6 +227,54 @@ class ButtonDensityRegressionTests(unittest.TestCase):
             button.sizePolicy().horizontalPolicy(),
         )
         self.assertGreater(button.maximumWidth(), button.minimumWidth())
+
+
+class ExpenseLedgerAccessibilityTests(unittest.TestCase):
+    def setUp(self):
+        _qt_application()
+
+    def test_history_search_filters_loaded_rows_and_reports_count(self):
+        table = QTableWidget(3, 4)
+        rows = [
+            ("Tuition", "12,400.00", "2025-06-26", "2025-2026"),
+            ("Transport", "400.00", "2026-07-15", "2026-2027"),
+            ("School supplies", "575.00", "2026-07-08", "2026-2027"),
+        ]
+        for row_index, values in enumerate(rows):
+            for column, value in enumerate(values):
+                table.setItem(row_index, column, QTableWidgetItem(value))
+        count_label = QLabel()
+        view = SimpleNamespace(
+            expenses_table=table,
+            expense_count_label=count_label,
+        )
+
+        StudentApp._filter_expense_history(view, "transport")
+
+        self.assertTrue(table.isRowHidden(0))
+        self.assertFalse(table.isRowHidden(1))
+        self.assertTrue(table.isRowHidden(2))
+        self.assertEqual("1 of 3 records", count_label.text())
+
+    def test_history_focus_mode_hides_entry_panels_and_enlarges_ledger(self):
+        focus_button = QPushButton()
+        ledger = QFrame()
+        table = QTableWidget()
+        operations_panel = QFrame()
+        operations_panel.show()
+        view = SimpleNamespace(
+            expense_operations_panel=operations_panel,
+            expense_focus_btn=focus_button,
+            expense_history_card=ledger,
+            expenses_table=table,
+            width=lambda: 1365,
+        )
+
+        StudentApp._toggle_expense_history_focus(view, True)
+
+        self.assertTrue(operations_panel.isHidden())
+        self.assertEqual("Show budget and entry", focus_button.text())
+        self.assertGreaterEqual(ledger.minimumHeight(), 580)
 
 
 class _StudentQuery:

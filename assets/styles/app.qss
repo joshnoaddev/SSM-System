@@ -621,7 +621,12 @@ QWidget#StudentCard[status="graduated"] *#StudentBadge { color: @graduated; }
 /* Tables */
 QTableView, QTableWidget { border: 1px solid @border_subtle; border-radius: 9px; background: @surface_raised; alternate-background-color: @surface_subtle; color: @text_primary; gridline-color: transparent; outline: none; selection-background-color: @primary_selected; selection-color: @text_primary; }
 QTableView::item, QTableWidget::item { padding: 9px; border-bottom: 1px solid @border_subtle; }
-QTableWidget#ExpensesTable::item { padding: 4px; }
+QTableWidget#ExpensesTable::item { padding: 8px 10px; }
+QTableWidget#ExpensesTable QHeaderView::section {
+    min-height: 44px;
+    padding: 11px 12px;
+    font-size: 11px;
+}
 QTableView::item:hover:!selected, QTableWidget::item:hover:!selected { background: @primary_soft; }
 QTableView::item:selected, QTableWidget::item:selected { background: @primary_selected; color: @text_primary; }
 QHeaderView::section {
