@@ -32,6 +32,8 @@ class ExpenseService:
         amount: Any,
         expense_date: str,
         school_year: str,
+        category: str = "Other",
+        approval_status: str = "Pending",
     ) -> List[Dict[str, Any]]:
         payload = self.build_expense_payload(
             student_id=student_id,
@@ -39,11 +41,30 @@ class ExpenseService:
             amount=amount,
             expense_date=expense_date,
             school_year=school_year,
+            category=category,
+            approval_status=approval_status,
         )
         return self.repository.insert_expense(payload)
 
     def delete_expense(self, expense_id: Any) -> List[Dict[str, Any]]:
         return self.repository.delete_expense(expense_id)
+
+    def archive_expense(
+        self,
+        expense_id: Any,
+        operator: str,
+    ) -> List[Dict[str, Any]]:
+        return self.repository.archive_expense(expense_id, operator)
+
+    def restore_expense(self, expense_id: Any) -> List[Dict[str, Any]]:
+        return self.repository.restore_expense(expense_id)
+
+    def update_expense(
+        self,
+        expense_id: Any,
+        fields: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        return self.repository.update_expense(expense_id, fields)
 
     def get_budget(self, student_id: Any, school_year: str) -> Optional[Dict[str, Any]]:
         if self._is_all_years(school_year):
@@ -102,6 +123,8 @@ class ExpenseService:
         amount: Any,
         expense_date: str,
         school_year: str,
+        category: str = "Other",
+        approval_status: str = "Pending",
     ) -> Dict[str, Any]:
         desc = str(description or "").strip()
         if not student_id:
@@ -112,6 +135,10 @@ class ExpenseService:
             raise ValueError("Expense date is required.")
         if not school_year:
             raise ValueError("School year is required.")
+        category_text = str(category or "").strip() or "Other"
+        approval_text = str(approval_status or "").strip().title()
+        if approval_text not in {"Pending", "Approved", "Rejected"}:
+            raise ValueError("Approval status must be Pending, Approved, or Rejected.")
 
         return {
             "student_id": student_id,
@@ -119,6 +146,8 @@ class ExpenseService:
             "amount": ExpenseService.parse_amount(amount),
             "date": str(expense_date),
             "school_year": str(school_year),
+            "category": category_text,
+            "approval_status": approval_text,
         }
 
     @staticmethod

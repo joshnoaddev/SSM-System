@@ -291,7 +291,7 @@ class ExpenseLedgerAccessibilityTests(unittest.TestCase):
         self.assertGreaterEqual(ledger.minimumHeight(), 580)
 
     def test_expense_delete_action_has_centered_vertical_clearance(self):
-        table = QTableWidget(0, 5)
+        table = QTableWidget(0, 8)
         table.resize(720, 220)
         view = SimpleNamespace(
             expenses_table=table,
@@ -309,7 +309,7 @@ class ExpenseLedgerAccessibilityTests(unittest.TestCase):
         )
         table.show()
         QApplication.processEvents()
-        action_cell = table.cellWidget(0, 4)
+        action_cell = table.cellWidget(0, 7)
         button = action_cell.findChild(QPushButton)
 
         self.assertEqual(56, table.rowHeight(0))
@@ -337,6 +337,9 @@ class _StudentQuery:
         return self
 
     def eq(self, field, value):
+        return self
+
+    def is_(self, field, value):
         return self
 
     def order(self, field, **kwargs):
@@ -465,6 +468,9 @@ class _FinancialQuery:
     def eq(self, _field, _value):
         return self
 
+    def is_(self, _field, _value):
+        return self
+
     def execute(self):
         return SimpleNamespace(data=self.client.rows.get(self.table_name, []))
 
@@ -509,6 +515,30 @@ class RegressionTests(unittest.TestCase):
     def test_negative_amounts_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "negative"):
             ExpenseService.parse_amount("-1.00")
+
+    def test_expense_payload_includes_review_workflow_defaults(self):
+        payload = ExpenseService.build_expense_payload(
+            student_id="student-1",
+            description="School supplies",
+            amount="1,250.00",
+            expense_date="2026-07-23",
+            school_year="2026-2027",
+            category="Uniform and supplies",
+        )
+
+        self.assertEqual("Uniform and supplies", payload["category"])
+        self.assertEqual("Pending", payload["approval_status"])
+
+    def test_expense_payload_rejects_unknown_approval_status(self):
+        with self.assertRaises(ValueError):
+            ExpenseService.build_expense_payload(
+                student_id="student-1",
+                description="School supplies",
+                amount="1250",
+                expense_date="2026-07-23",
+                school_year="2026-2027",
+                approval_status="Maybe",
+            )
 
     def test_expense_card_status_reports_no_allocated_budget(self):
         status = ExpenseService.budget_card_status(None)

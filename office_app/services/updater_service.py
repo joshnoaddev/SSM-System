@@ -7,11 +7,11 @@ import threading
 
 class UpdaterService:
     # Change this whenever you compile a new .exe!
-    CURRENT_VERSION = "1.3.0"
+    CURRENT_VERSION = "1.3.1"
     CURRENT_RELEASE_NOTES = (
-        "Unclipped expense actions",
-        "Safer table row spacing",
-        "Responsive settings actions",
+        "Recoverable student and expense archive",
+        "Searchable office activity log",
+        "Expense categories, receipts, and approvals",
     )
     MIN_INSTALLER_BYTES = 40 * 1024 * 1024
 

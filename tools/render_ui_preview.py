@@ -184,6 +184,40 @@ def render(path: Path, width: int, height: int) -> None:
             "coordinators": 10,
         },
     }
+    AuditRepository.list_events = lambda self, limit=300: [
+        {
+            "id": "event-1",
+            "created_at": "2026-07-23T08:15:00+00:00",
+            "operator": "Joshua",
+            "action": "expense_review",
+            "entity_type": "expense",
+            "entity_id": "expense-2",
+            "details": {"approval_status": "Approved"},
+        },
+        {
+            "id": "event-2",
+            "created_at": "2026-07-23T07:40:00+00:00",
+            "operator": "Mary Rose",
+            "action": "update",
+            "entity_type": "student",
+            "entity_id": "active-1",
+            "details": {"fields": "sponsor, status"},
+        },
+    ]
+    StudentRepository.list_archived_students = lambda self: [
+        {
+            **SAMPLE_STUDENTS[3],
+            "archived_at": "2026-07-22T09:10:00+00:00",
+            "archived_by": "Joshua",
+        }
+    ]
+    ExpenseRepository.list_archived_expenses = lambda self: [
+        {
+            **SAMPLE_EXPENSES[0],
+            "archived_at": "2026-07-21T05:30:00+00:00",
+            "archived_by": "Mary Rose",
+        }
+    ]
     app_module.StudentApp._start_update_poller = lambda self: None
     window = app_module.StudentApp(object(), initial_user="Joshua")
     window.resize(width, height)
@@ -204,6 +238,10 @@ def render(path: Path, width: int, height: int) -> None:
         window.nav_coordinators()
     elif page == "settings":
         window.nav_settings()
+    elif page == "activity":
+        window.nav_activity()
+    elif page == "archive":
+        window.nav_archive()
 
     # Native Windows may recenter a window after a page changes its size hint.
     # Pinning the test window keeps 980×700 captures deterministic on smaller

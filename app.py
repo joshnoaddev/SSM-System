@@ -24,13 +24,13 @@ from PyQt6.QtWidgets import (
     QPushButton as NativePushButton,
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, pyqtSignal, QObject, QRectF, QSettings, QSize, QDate,
+    Qt, QTimer, pyqtSignal, QObject, QRectF, QSettings, QSize, QDate, QUrl,
     QPropertyAnimation, QEasingCurve, QThreadPool, pyqtProperty, QPointF
 )
 from PyQt6.QtGui import (
     QPixmap, QPainter, QColor, QPen, QIcon, QImage, QLinearGradient, QFont,
     QRadialGradient, QPainterPath, QAction, QKeySequence, QFontDatabase,
-    QRegion,
+    QRegion, QDesktopServices,
 )
 
 from supabase import Client
@@ -46,12 +46,14 @@ from office_app.utils.paths import resource_path
 from office_app.utils.background_tasks import BackgroundTask
 from office_app.repositories.coordinator_repository import CoordinatorRepository
 from office_app.repositories.audit_repository import AuditRepository
+from office_app.repositories.expense_repository import ExpenseRepository
 from office_app.repositories.student_repository import StudentRepository
 from office_app.repositories.workbook_repository import WorkbookRepository
 from office_app.services.expense_service import ExpenseService
 from office_app.services.dashboard_service import DashboardService
 from office_app.services.masterlist_service import MasterListService
 from office_app.services.photo_service import PhotoService
+from office_app.services.receipt_service import ReceiptService
 from office_app.services.student_service import StudentService
 from office_app.services.student_excel_service import StudentExcelService
 from office_app.services.student_list_service import StudentListService
@@ -73,6 +75,8 @@ from office_app.ui.motion import (
     attach_press_feedback,
     fade_in,
 )
+from office_app.ui.views.activity_log_view import ActivityLogView
+from office_app.ui.views.archive_view import ArchiveView
 from office_app.ui.fluent import (
     BodyLabel as QLabel,
     CardWidget,
@@ -1388,7 +1392,9 @@ class StudentApp(QMainWindow):
         self.student_list_service = StudentListService(self.student_service)
         self.dashboard_service = DashboardService()
         self.photo_service = PhotoService(client=self.sb)
-        self.expense_service = ExpenseService()
+        self.receipt_service = ReceiptService(client=self.sb)
+        self.expense_repository = ExpenseRepository(client=self.sb)
+        self.expense_service = ExpenseService(self.expense_repository)
         self.coordinator_repository = CoordinatorRepository()
         self.audit_repository = AuditRepository()
         self.sheet_sync_service = GoogleSheetSyncService(self.audit_repository)
@@ -1404,6 +1410,7 @@ class StudentApp(QMainWindow):
         self._current_operator = initial_user
         self.current_student_id = None
         self._pending_photo = None
+        self._pending_receipt = None
         self._editing_id = None
         self._editing_snapshot = None
         self._workbook = None
@@ -1597,6 +1604,20 @@ class StudentApp(QMainWindow):
         self.create_workbook_screen()   # Index 5
         self.create_coordinators_screen()  # Index 6
         self.create_settings_screen()   # Index 7
+        self.activity_log_view = ActivityLogView(
+            self.audit_repository,
+            self._run_background,
+        )
+        self.stacked_widget.addWidget(self.activity_log_view)  # Index 8
+        self.archive_view = ArchiveView(
+            self.student_repository,
+            self.expense_repository,
+            self._run_background,
+            lambda: self._current_operator,
+            self._audit,
+        )
+        self.archive_view.records_changed.connect(self._on_students_changed)
+        self.stacked_widget.addWidget(self.archive_view)  # Index 9
         self.settings_view.theme_changed.connect(self.change_theme)
         self.settings_view.connection_settings_requested.connect(
             self._open_connection_settings
@@ -1721,6 +1742,14 @@ class StudentApp(QMainWindow):
                 "Settings",
                 "Configure appearance, accessibility, and office connections.",
             ),
+            8: (
+                "Activity log",
+                "Review who changed shared office records and when.",
+            ),
+            9: (
+                "Archive",
+                "Restore student and expense records without losing history.",
+            ),
         }
         title, subtitle = pages.get(index, ("SSM Workspace", "Student support records"))
         self.page_title_label.setText(title)
@@ -1734,6 +1763,8 @@ class StudentApp(QMainWindow):
             5: (None, ("Open in Excel", "primary")),
             6: (None, ("New coordinator", "primary")),
             7: (None, None),
+            8: (None, None),
+            9: (None, None),
         }
         secondary, primary = action_map.get(index, (None, None))
         self._configure_header_button(self.header_secondary_button, secondary)
@@ -1780,6 +1811,8 @@ class StudentApp(QMainWindow):
             5: self.btn_workbook,
             6: self.btn_coordinators,
             7: self.btn_settings,
+            8: self.btn_activity,
+            9: self.btn_archive,
         }.get(index)
 
     def _header_action_clicked(self):
@@ -1801,6 +1834,10 @@ class StudentApp(QMainWindow):
             self.nav_students()
         elif index == 4:
             self._switch_page(2) if self.current_student_id else self.nav_students()
+        elif index == 8:
+            self.activity_log_view.load_events()
+        elif index == 9:
+            self.archive_view.load_records()
         else:
             self._sidebar_refresh()
 
@@ -1823,16 +1860,20 @@ class StudentApp(QMainWindow):
         )
         compact = self.width() < 1120 or side_by_side
         card = self.expense_add_card
-        card.setFixedHeight(184 if compact else 118)
+        card.setFixedHeight(250 if compact else 184)
         widgets = (
             self.expense_description_label,
             self.expense_amount_label,
             self.expense_date_label,
             self.expense_year_label,
+            self.expense_category_label,
+            self.expense_receipt_label,
             self.exp_desc,
             self.exp_amount,
             self.exp_date,
             self.exp_sy_entry,
+            self.exp_category,
+            self.exp_receipt_btn,
             self.add_expense_btn,
         )
         for widget in widgets:
@@ -1847,28 +1888,41 @@ class StudentApp(QMainWindow):
             grid.addWidget(self.exp_amount, 1, 2)
             grid.addWidget(self.expense_date_label, 2, 0)
             grid.addWidget(self.expense_year_label, 2, 1)
+            grid.addWidget(self.expense_category_label, 2, 2)
             grid.addWidget(self.exp_date, 3, 0)
             grid.addWidget(self.exp_sy_entry, 3, 1)
-            grid.addWidget(self.add_expense_btn, 3, 2)
+            grid.addWidget(self.exp_category, 3, 2)
+            grid.addWidget(self.expense_receipt_label, 4, 0, 1, 2)
+            grid.addWidget(self.exp_receipt_btn, 5, 0, 1, 2)
+            grid.addWidget(self.add_expense_btn, 5, 2)
             grid.setColumnStretch(0, 2)
             grid.setColumnStretch(1, 1)
             grid.setColumnStretch(2, 1)
             self.exp_date.setMinimumWidth(0)
         else:
-            grid.addWidget(self.expense_description_label, 0, 0)
-            grid.addWidget(self.expense_amount_label, 0, 1)
-            grid.addWidget(self.expense_date_label, 0, 2)
-            grid.addWidget(self.expense_year_label, 0, 3)
-            grid.addWidget(self.exp_desc, 1, 0)
-            grid.addWidget(self.exp_amount, 1, 1)
-            grid.addWidget(self.exp_date, 1, 2)
-            grid.addWidget(self.exp_sy_entry, 1, 3)
-            grid.addWidget(self.add_expense_btn, 1, 4)
+            grid.addWidget(self.expense_description_label, 0, 0, 1, 2)
+            grid.addWidget(self.expense_amount_label, 0, 2)
+            grid.addWidget(self.expense_date_label, 0, 3)
+            grid.addWidget(self.expense_year_label, 0, 4)
+            grid.addWidget(self.exp_desc, 1, 0, 1, 2)
+            grid.addWidget(self.exp_amount, 1, 2)
+            grid.addWidget(self.exp_date, 1, 3)
+            grid.addWidget(self.exp_sy_entry, 1, 4)
+            grid.addWidget(self.expense_category_label, 2, 0)
+            grid.addWidget(self.expense_receipt_label, 2, 1, 1, 3)
+            grid.addWidget(self.exp_category, 3, 0)
+            grid.addWidget(self.exp_receipt_btn, 3, 1, 1, 3)
+            grid.addWidget(self.add_expense_btn, 3, 4)
             grid.setColumnStretch(0, 3)
             grid.setColumnStretch(1, 1)
             grid.setColumnStretch(2, 1)
             grid.setColumnStretch(3, 1)
+            grid.setColumnStretch(4, 0)
             self.exp_date.setMinimumWidth(190)
+        if hasattr(self, "expenses_table"):
+            compact_table = self.width() < 1240
+            self.expenses_table.setColumnHidden(1, compact_table)
+            self.expenses_table.setColumnHidden(6, compact_table)
         if hasattr(self, "expense_search"):
             self.expense_search.setFixedWidth(280 if compact else 380)
         if hasattr(self, "expense_history_card"):
@@ -1969,7 +2023,7 @@ class StudentApp(QMainWindow):
         visible_rows = 0
         for row in range(total_rows):
             values = []
-            for column in range(4):
+            for column in range(7):
                 item = self.expenses_table.item(row, column)
                 values.append(item.text() if item is not None else "")
             matches = not query or query in " ".join(values).casefold()
@@ -2152,9 +2206,9 @@ class StudentApp(QMainWindow):
 
         brand_container = QWidget()
         brand_container.setObjectName("BrandPanel")
-        brand_container.setFixedHeight(72)
+        brand_container.setFixedHeight(64)
         brand_layout = QHBoxLayout(brand_container)
-        brand_layout.setContentsMargins(12, 24, 0, 11)
+        brand_layout.setContentsMargins(12, 18, 0, 9)
         brand_layout.setSpacing(12)
 
         logo_lbl = NativeLabel()
@@ -2189,7 +2243,7 @@ class StudentApp(QMainWindow):
         )
         sidebar_layout.addWidget(brand_container)
 
-        sidebar_layout.addSpacing(28)
+        sidebar_layout.addSpacing(18)
 
         self.btn_dash = NativePushButton("Dashboard")
         self.btn_stud = NativePushButton("Students")
@@ -2197,6 +2251,8 @@ class StudentApp(QMainWindow):
         self.btn_coordinators = NativePushButton("Coordinators")
         self.btn_add  = NativePushButton("New student")
         self.btn_workbook = NativePushButton("Workbook")
+        self.btn_activity = NativePushButton("Activity log")
+        self.btn_archive = NativePushButton("Archive")
         self.btn_settings = NativePushButton("Settings")
 
         button_icons = {
@@ -2208,12 +2264,16 @@ class StudentApp(QMainWindow):
             self.btn_workbook: "▧",
             self.btn_settings: "⚙",
         }
+        button_icons.update({
+            self.btn_activity: "=",
+            self.btn_archive: "<",
+        })
         for btn, icon_symbol in button_icons.items():
             btn.setProperty("class", "SidebarBtn")
             btn.setCheckable(True)
             btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFixedHeight(42)
+            btn.setFixedHeight(40)
             btn.setSizePolicy(
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Fixed,
@@ -2227,6 +2287,8 @@ class StudentApp(QMainWindow):
         self.btn_add.clicked.connect(self.nav_add)
         self.btn_exp.clicked.connect(self.nav_expenses)
         self.btn_workbook.clicked.connect(self.nav_workbook)
+        self.btn_activity.clicked.connect(self.nav_activity)
+        self.btn_archive.clicked.connect(self.nav_archive)
         self.btn_coordinators.clicked.connect(self.nav_coordinators)
         self.btn_settings.clicked.connect(self.nav_settings)
 
@@ -2237,7 +2299,7 @@ class StudentApp(QMainWindow):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
         )
         sidebar_layout.addWidget(records_label)
-        sidebar_layout.addSpacing(14)
+        sidebar_layout.addSpacing(10)
         for button in (
             self.btn_dash,
             self.btn_stud,
@@ -2247,9 +2309,9 @@ class StudentApp(QMainWindow):
         ):
             sidebar_layout.addWidget(button)
             if button is not self.btn_coordinators:
-                sidebar_layout.addSpacing(6)
+                sidebar_layout.addSpacing(4)
 
-        sidebar_layout.addSpacing(23)
+        sidebar_layout.addSpacing(18)
         tools_label = NativeLabel("TOOLS")
         tools_label.setObjectName("SidebarGroupLabel")
         tools_label.setFixedHeight(13)
@@ -2257,9 +2319,13 @@ class StudentApp(QMainWindow):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
         )
         sidebar_layout.addWidget(tools_label)
-        sidebar_layout.addSpacing(14)
+        sidebar_layout.addSpacing(10)
         sidebar_layout.addWidget(self.btn_workbook)
-        sidebar_layout.addSpacing(6)
+        sidebar_layout.addSpacing(4)
+        sidebar_layout.addWidget(self.btn_activity)
+        sidebar_layout.addSpacing(4)
+        sidebar_layout.addWidget(self.btn_archive)
+        sidebar_layout.addSpacing(4)
         sidebar_layout.addWidget(self.btn_settings)
         sidebar_layout.addStretch()
 
@@ -2547,6 +2613,16 @@ class StudentApp(QMainWindow):
         self.refresh_sync_status()
         self._test_settings_connection(silent=True)
 
+    def nav_activity(self):
+        self._set_active_nav(self.btn_activity)
+        self._switch_page(8)
+        self.activity_log_view.load_events()
+
+    def nav_archive(self):
+        self._set_active_nav(self.btn_archive)
+        self._switch_page(9)
+        self.archive_view.load_records()
+
     def _on_user_changed(self, name):
         if not name:
             return
@@ -2647,6 +2723,10 @@ class StudentApp(QMainWindow):
             task = self._refresh_expenses_view()
         elif idx == 6:
             task = self.load_coordinators()
+        elif idx == 8:
+            task = self.activity_log_view.load_events()
+        elif idx == 9:
+            task = self.archive_view.load_records()
 
         if button is not None and task is not None:
             def restore_refresh_button():
@@ -2676,7 +2756,17 @@ class StudentApp(QMainWindow):
                         exc_info=True,
                     )
             return
-        for btn in [self.btn_dash, self.btn_stud, self.btn_exp, self.btn_coordinators, self.btn_add, self.btn_workbook, self.btn_settings]:
+        for btn in [
+            self.btn_dash,
+            self.btn_stud,
+            self.btn_exp,
+            self.btn_coordinators,
+            self.btn_add,
+            self.btn_workbook,
+            self.btn_activity,
+            self.btn_archive,
+            self.btn_settings,
+        ]:
             btn.setChecked(btn is active_btn)
 
     # ── KEEPALIVE ─────────────────────────────────────────────────────────────
@@ -4068,7 +4158,7 @@ class StudentApp(QMainWindow):
         self.deactivate_btn = ActionButton("Mark inactive", widget, variant="tertiary")
         self.deactivate_btn.clicked.connect(self.toggle_active_status)
         self.deactivate_btn.hide()
-        self.remove_student_btn = ActionButton("Remove", widget, variant="danger")
+        self.remove_student_btn = ActionButton("Archive", widget, variant="danger")
         self.remove_student_btn.clicked.connect(self.remove_current_student)
         self.remove_student_btn.hide()
         profile_menu = QMenu(widget)
@@ -4080,7 +4170,7 @@ class StudentApp(QMainWindow):
         profile_menu.addSeparator()
         self.profile_status_action = profile_menu.addAction("Mark inactive")
         self.profile_status_action.triggered.connect(self.toggle_active_status)
-        self.profile_remove_action = profile_menu.addAction("Remove student")
+        self.profile_remove_action = profile_menu.addAction("Archive student")
         self.profile_remove_action.triggered.connect(self.remove_current_student)
 
         summary = QFrame()
@@ -4562,7 +4652,7 @@ class StudentApp(QMainWindow):
         # Add expense card
         add_card = Card()
         self.expense_add_card = add_card
-        add_card.setFixedHeight(118)
+        add_card.setFixedHeight(184)
         add_layout = QVBoxLayout(add_card)
         add_layout.setContentsMargins(16, 16, 16, 16)
         add_layout.setSpacing(8)
@@ -4590,6 +4680,27 @@ class StudentApp(QMainWindow):
         self.exp_sy_entry.addItems(sy_list)
         if idx >= 1: self.exp_sy_entry.setCurrentIndex(idx - 1)
         self.exp_sy_entry.setMinimumHeight(40)
+        self.exp_category = QComboBox()
+        self.exp_category.addItems(
+            [
+                "Tuition and school fees",
+                "Allowance",
+                "Transport",
+                "Uniform and supplies",
+                "Medical",
+                "Food",
+                "Other",
+            ]
+        )
+        self.exp_category.setCurrentText("Other")
+        self.exp_category.setMinimumHeight(40)
+        self.exp_receipt_btn = ActionButton(
+            "Attach receipt (optional)",
+            variant="secondary",
+        )
+        self.exp_receipt_btn.setMinimumHeight(40)
+        self.exp_receipt_btn.setAccessibleName("Attach an expense receipt")
+        self.exp_receipt_btn.clicked.connect(self.choose_expense_receipt)
         self.add_expense_btn = PrimaryPushButton("Add expense")
         set_content_hugging_button(self.add_expense_btn)
         self.add_expense_btn.clicked.connect(self.add_expense)
@@ -4601,6 +4712,10 @@ class StudentApp(QMainWindow):
         self.expense_date_label.setObjectName("FieldLabel")
         self.expense_year_label = QLabel("School year")
         self.expense_year_label.setObjectName("FieldLabel")
+        self.expense_category_label = QLabel("Category")
+        self.expense_category_label.setObjectName("FieldLabel")
+        self.expense_receipt_label = QLabel("Receipt")
+        self.expense_receipt_label.setObjectName("FieldLabel")
         add_grid.addWidget(self.expense_description_label, 0, 0)
         add_grid.addWidget(self.expense_amount_label, 0, 1)
         add_grid.addWidget(self.expense_date_label, 0, 2)
@@ -4681,18 +4796,32 @@ class StudentApp(QMainWindow):
         history_tools.addWidget(self.expense_focus_btn)
         table_layout.addLayout(history_tools)
 
-        self.expenses_table = QTableWidget(0, 5)
+        self.expenses_table = QTableWidget(0, 8)
         self.expenses_table.setObjectName("ExpensesTable")
-        self.expenses_table.setHorizontalHeaderLabels(["Description", "Amount (PHP)", "Date", "School year", ""])
+        self.expenses_table.setHorizontalHeaderLabels(
+            [
+                "Description",
+                "Category",
+                "Amount (PHP)",
+                "Date",
+                "School year",
+                "Approval",
+                "Receipt",
+                "",
+            ]
+        )
         self.expenses_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.expenses_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.expenses_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.expenses_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.expenses_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.expenses_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.expenses_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         self.expenses_table.horizontalHeader().setSectionResizeMode(
-            4,
+            7,
             QHeaderView.ResizeMode.Fixed,
         )
-        self.expenses_table.setColumnWidth(4, 100)
+        self.expenses_table.setColumnWidth(7, 112)
         self.expenses_table.horizontalHeader().setStretchLastSection(False)
         self.expenses_table.horizontalHeader().setMinimumHeight(44)
         self.expenses_table.verticalHeader().setVisible(False)
@@ -4711,7 +4840,7 @@ class StudentApp(QMainWindow):
         )
         self.expenses_table.setAccessibleName("Expense history ledger")
         self.expenses_table.setAccessibleDescription(
-            "Expense description, amount, date, school year, and delete action."
+            "Expense description, category, amount, date, school year, approval, receipt, and review action."
         )
         self.expenses_table.setMinimumHeight(280)
         self.expenses_table.verticalHeader().setMinimumSectionSize(56)
@@ -6454,11 +6583,11 @@ class StudentApp(QMainWindow):
         )
         confirm = QMessageBox.question(
             self,
-            "Remove student",
+            "Archive student",
             (
-                f"Remove {name}?\n\n"
-                "This will permanently delete the student record and related "
-                "expenses, budgets, donor links, and movement entries."
+                f"Move {name} to the archive?\n\n"
+                "The student will disappear from active lists, but their record, "
+                "expenses, and history can be restored from Archive."
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -6466,42 +6595,31 @@ class StudentApp(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        sure = QMessageBox.question(
-            self,
-            "Remove this student?",
-            (
-                f"Are you sure you want to permanently remove {name}?\n\n"
-                "This deletes the live Supabase data for everyone using the system."
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if sure != QMessageBox.StandardButton.Yes:
-            return
-
         student_id = self.current_student_id
 
         def remove():
-            return self.student_repository.delete_student_with_related(student_id)
+            return self.student_repository.archive_student(
+                student_id,
+                self._current_operator,
+            )
 
         def removed(result):
-            deleted = result.get("students", [])
-            if not deleted:
-                self.status_bar.showMessage("Student was not found or was already removed.", 5000)
+            if not result:
+                self.status_bar.showMessage("Student was not found or was already archived.", 5000)
             else:
-                self.status_bar.showMessage(f"Removed {name}.", 5000)
-            self._audit("delete", "student", student_id, details={"name": name})
+                self.status_bar.showMessage(f"Archived {name}.", 5000)
+            self._audit("archive", "student", student_id, details={"name": name})
             self.current_student_id = None
             self._on_students_changed()
             self.nav_students()
 
         def failed(error):
             self.status_bar.showMessage(
-                "Could not remove the student. Check the office connection and try again.",
+                "Could not archive the student. Check the office connection and try again.",
                 8000,
             )
             logging.getLogger(__name__).error(
-                "Student removal failed:\n%s", error
+                "Student archive failed:\n%s", error
             )
 
         self._run_background(remove, removed, failed)
@@ -6931,36 +7049,74 @@ class StudentApp(QMainWindow):
         description_item = QTableWidgetItem(exp.get("description", ""))
         description_item.setToolTip(description_item.text())
         self.expenses_table.setItem(row_idx, 0, description_item)
+        self.expenses_table.setItem(
+            row_idx,
+            1,
+            QTableWidgetItem(exp.get("category") or "Other"),
+        )
         amount = exp.get("amount", 0) or 0
         amount_item = QTableWidgetItem(f"{amount:,.2f}")
         amount_item.setTextAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         amount_item.setToolTip(f"PHP {amount:,.2f}")
-        self.expenses_table.setItem(row_idx, 1, amount_item)
-        self.expenses_table.setItem(row_idx, 2, QTableWidgetItem(exp.get("date") or ""))
-        self.expenses_table.setItem(row_idx, 3, QTableWidgetItem(exp.get("school_year") or ""))
-        del_btn = ActionButton("Delete", variant="danger")
-        del_btn.setProperty("density", "compact")
-        set_content_hugging_button(del_btn, min_width=64, height=40)
-        del_btn.setAccessibleName(
-            "Delete expense "
+        self.expenses_table.setItem(row_idx, 2, amount_item)
+        self.expenses_table.setItem(row_idx, 3, QTableWidgetItem(exp.get("date") or ""))
+        self.expenses_table.setItem(row_idx, 4, QTableWidgetItem(exp.get("school_year") or ""))
+        approval_item = QTableWidgetItem(exp.get("approval_status") or "Pending")
+        approval_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.expenses_table.setItem(row_idx, 5, approval_item)
+        receipt_url = str(exp.get("receipt_url") or "").strip()
+        if receipt_url:
+            receipt_btn = ActionButton("Open", variant="tertiary")
+            set_content_hugging_button(receipt_btn, min_width=58, height=36)
+            receipt_btn.setAccessibleName(
+                f"Open receipt for {description_item.text()}"
+            )
+            receipt_btn.clicked.connect(
+                lambda _checked=False, url=receipt_url: QDesktopServices.openUrl(
+                    QUrl(url)
+                )
+            )
+            receipt_cell = QWidget()
+            receipt_layout = QHBoxLayout(receipt_cell)
+            receipt_layout.setContentsMargins(4, 8, 4, 8)
+            receipt_layout.addWidget(
+                receipt_btn,
+                alignment=Qt.AlignmentFlag.AlignCenter,
+            )
+            self.expenses_table.setCellWidget(row_idx, 6, receipt_cell)
+        else:
+            receipt_item = QTableWidgetItem("—")
+            receipt_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.expenses_table.setItem(row_idx, 6, receipt_item)
+        review_btn = ActionButton("Review", variant="secondary")
+        review_btn.setProperty("density", "compact")
+        set_content_hugging_button(review_btn, min_width=76, height=40)
+        review_btn.setAccessibleName(
+            "Review expense "
             f"{description_item.text()}, PHP {amount:,.2f}, "
             f"{exp.get('date') or 'date not set'}"
         )
-        del_btn.setToolTip("Delete this expense record")
-        expense_id = exp["id"]
-        del_btn.clicked.connect(lambda _, e=expense_id: self.delete_expense(e))
+        review_btn.setToolTip("Approve, reject, open receipt, or archive")
+        review_btn.clicked.connect(
+            lambda _checked=False, data=dict(exp), button=review_btn:
+            self._show_expense_review_menu(data, button)
+        )
         action_cell = QWidget()
         action_cell.setObjectName("TableActionCell")
         action_layout = QHBoxLayout(action_cell)
         action_layout.setContentsMargins(6, 6, 6, 6)
         action_layout.setSpacing(0)
         action_layout.addWidget(
-            del_btn,
+            review_btn,
             alignment=Qt.AlignmentFlag.AlignCenter,
         )
-        self.expenses_table.setCellWidget(row_idx, 4, action_cell)
+        self.expenses_table.setCellWidget(row_idx, 7, action_cell)
 
     def save_budget(self):
         """Upsert budget for current student + school year."""
@@ -7017,21 +7173,59 @@ class StudentApp(QMainWindow):
             self.status_bar.showMessage("Invalid amount - enter a number like 250.00", 4000)
             return
         school_year = self.exp_sy_entry.currentText()
+        category = self.exp_category.currentText()
         expense_date = self.exp_date.date().toString("yyyy-MM-dd")
         student_id = self.current_student_id
+        receipt_path = self._pending_receipt
         self.add_expense_btn.setEnabled(False)
         self.add_expense_btn.setText("Adding…")
+
+        def work():
+            rows = self.expense_service.add_expense(
+                student_id,
+                desc,
+                amount,
+                expense_date,
+                school_year,
+                category,
+                "Pending",
+            )
+            if receipt_path and rows:
+                expense_id = rows[0].get("id")
+                if expense_id:
+                    receipt_url, receipt_name = self.receipt_service.upload_receipt(
+                        receipt_path,
+                        expense_id,
+                    )
+                    self.expense_service.update_expense(
+                        expense_id,
+                        {
+                            "receipt_url": receipt_url,
+                            "receipt_name": receipt_name,
+                        },
+                    )
+            return rows
 
         def added(_result):
             if student_id != self.current_student_id:
                 return
             self._audit(
                 "add_expense", "student", student_id,
-                {"school_year": school_year, "amount": amount, "description": desc},
+                {
+                    "school_year": school_year,
+                    "amount": amount,
+                    "description": desc,
+                    "category": category,
+                    "receipt_attached": bool(receipt_path),
+                    "approval_status": "Pending",
+                },
             )
             self.exp_desc.clear()
             self.exp_amount.clear()
+            self.exp_category.setCurrentText("Other")
             self.exp_date.setDate(QDate.currentDate())
+            self._pending_receipt = None
+            self.exp_receipt_btn.setText("Attach receipt (optional)")
             if self.exp_school_year.currentText() not in (ExpenseService.ALL_YEARS, school_year):
                 self.exp_school_year.setCurrentText(school_year)
             else:
@@ -7049,13 +7243,7 @@ class StudentApp(QMainWindow):
             logging.getLogger(__name__).error("Expense add failed:\n%s", error)
 
         return self._run_background(
-            lambda: self.expense_service.add_expense(
-                student_id,
-                desc,
-                amount,
-                expense_date,
-                school_year,
-            ),
+            work,
             added,
             failed,
         )
@@ -7063,8 +7251,11 @@ class StudentApp(QMainWindow):
     def delete_expense(self, eid):
         confirm = QMessageBox.question(
             self,
-            "Delete expense",
-            "Delete this expense from the student's history?",
+            "Archive expense",
+            (
+                "Move this expense to the archive?\n\n"
+                "It will stop counting toward totals and can be restored later."
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -7074,23 +7265,111 @@ class StudentApp(QMainWindow):
         self.expenses_table.setEnabled(False)
 
         def deleted(_result):
-            self._audit("delete", "expense", eid)
+            self._audit("archive", "expense", eid)
             self._refresh_expenses_view()
             self.expenses_table.setEnabled(True)
-            self.status_bar.showMessage("Expense deleted", 4000)
+            self.status_bar.showMessage("Expense archived", 4000)
 
         def failed(error):
             if student_id == self.current_student_id:
                 self.expenses_table.setEnabled(True)
             self.status_bar.showMessage(
-                "Could not delete the expense. Check the office connection and try again.",
+                "Could not archive the expense. Check the office connection and try again.",
                 8000,
             )
-            logging.getLogger(__name__).error("Expense delete failed:\n%s", error)
+            logging.getLogger(__name__).error("Expense archive failed:\n%s", error)
 
         return self._run_background(
-            lambda: self.expense_service.delete_expense(eid),
+            lambda: self.expense_service.archive_expense(
+                eid,
+                self._current_operator,
+            ),
             deleted,
+            failed,
+        )
+
+    def choose_expense_receipt(self):
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Attach expense receipt",
+            "",
+            "Receipts (*.pdf *.jpg *.jpeg *.png *.webp)",
+        )
+        if not path:
+            return
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            self.status_bar.showMessage("Could not read the selected receipt.", 4000)
+            return
+        if size > self.receipt_service.MAX_BYTES:
+            self.status_bar.showMessage("Receipt must be 10 MB or smaller.", 5000)
+            return
+        self._pending_receipt = path
+        self.exp_receipt_btn.setText(f"Attached: {os.path.basename(path)}")
+        self.exp_receipt_btn.setToolTip(path)
+
+    def _show_expense_review_menu(self, expense, button):
+        menu = QMenu(button)
+        status = str(expense.get("approval_status") or "Pending")
+        approve = menu.addAction("Approve")
+        pending = menu.addAction("Mark pending")
+        reject = menu.addAction("Reject")
+        menu.addSeparator()
+        open_receipt = menu.addAction("Open receipt")
+        open_receipt.setEnabled(bool(expense.get("receipt_url")))
+        menu.addSeparator()
+        archive = menu.addAction("Archive expense")
+        selected = menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+        if selected is approve and status != "Approved":
+            self._set_expense_approval(expense["id"], "Approved")
+        elif selected is pending and status != "Pending":
+            self._set_expense_approval(expense["id"], "Pending")
+        elif selected is reject and status != "Rejected":
+            self._set_expense_approval(expense["id"], "Rejected")
+        elif selected is open_receipt:
+            QDesktopServices.openUrl(QUrl(str(expense.get("receipt_url") or "")))
+        elif selected is archive:
+            self.delete_expense(expense["id"])
+
+    def _set_expense_approval(self, expense_id, status):
+        fields = {"approval_status": status}
+        if status == "Approved":
+            fields.update(
+                {
+                    "approved_by": self._current_operator,
+                    "approved_at": datetime.now().astimezone().isoformat(),
+                }
+            )
+        else:
+            fields.update({"approved_by": None, "approved_at": None})
+        self.expenses_table.setEnabled(False)
+
+        def updated(_rows):
+            self._audit(
+                "expense_review",
+                "expense",
+                expense_id,
+                {"approval_status": status},
+            )
+            self.expenses_table.setEnabled(True)
+            self._refresh_expenses_view()
+            self.status_bar.showMessage(f"Expense marked {status.lower()}.", 4000)
+
+        def failed(error):
+            self.expenses_table.setEnabled(True)
+            self.status_bar.showMessage(
+                "Could not update the expense review status.",
+                6000,
+            )
+            logging.getLogger(__name__).error(
+                "Expense review failed:\n%s",
+                error,
+            )
+
+        return self._run_background(
+            lambda: self.expense_service.update_expense(expense_id, fields),
+            updated,
             failed,
         )
 

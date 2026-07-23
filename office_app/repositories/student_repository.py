@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 
@@ -28,6 +29,7 @@ class StudentRepository:
         response = (
             self.sb.table("students")
             .select(columns)
+            .is_("archived_at", "null")
             .order(order_by, desc=not ascending)
             .execute()
         )
@@ -71,6 +73,35 @@ class StudentRepository:
 
     def delete_student(self, student_id: Any) -> List[Dict[str, Any]]:
         response = self.sb.table("students").delete().eq("id", student_id).execute()
+        return list(response.data or [])
+
+    def archive_student(
+        self,
+        student_id: Any,
+        operator: str,
+    ) -> List[Dict[str, Any]]:
+        return self.update_student(
+            student_id,
+            {
+                "archived_at": datetime.now(timezone.utc).isoformat(),
+                "archived_by": str(operator or "").strip() or "Unknown operator",
+            },
+        )
+
+    def restore_student(self, student_id: Any) -> List[Dict[str, Any]]:
+        return self.update_student(
+            student_id,
+            {"archived_at": None, "archived_by": None},
+        )
+
+    def list_archived_students(self) -> List[Dict[str, Any]]:
+        response = (
+            self.sb.table("students")
+            .select("*")
+            .not_.is_("archived_at", "null")
+            .order("archived_at", desc=True)
+            .execute()
+        )
         return list(response.data or [])
 
     def delete_student_with_related(self, student_id: Any) -> Dict[str, List[Dict[str, Any]]]:
@@ -143,7 +174,11 @@ class StudentRepository:
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         def build_query():
-            query = self.sb.table("students").select(columns)
+            query = (
+                self.sb.table("students")
+                .select(columns)
+                .is_("archived_at", "null")
+            )
             if name_query:
                 escaped = name_query.replace("\\", "\\\\").replace('"', '\\"')
                 query = query.or_(

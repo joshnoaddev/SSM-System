@@ -7,6 +7,7 @@ raw dictionaries/lists from Supabase responses.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 
@@ -35,7 +36,12 @@ class ExpenseRepository:
         *,
         order_by: str = "date",
     ) -> List[Dict[str, Any]]:
-        query = self.sb.table("expenses").select("*").eq("student_id", student_id)
+        query = (
+            self.sb.table("expenses")
+            .select("*")
+            .eq("student_id", student_id)
+            .is_("archived_at", "null")
+        )
         if school_year:
             query = query.eq("school_year", school_year)
         response = query.order(order_by).execute()
@@ -47,6 +53,48 @@ class ExpenseRepository:
 
     def delete_expense(self, expense_id: Any) -> List[Dict[str, Any]]:
         response = self.sb.table("expenses").delete().eq("id", expense_id).execute()
+        return list(response.data or [])
+
+    def update_expense(
+        self,
+        expense_id: Any,
+        fields: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        response = (
+            self.sb.table("expenses")
+            .update(fields)
+            .eq("id", expense_id)
+            .execute()
+        )
+        return list(response.data or [])
+
+    def archive_expense(
+        self,
+        expense_id: Any,
+        operator: str,
+    ) -> List[Dict[str, Any]]:
+        return self.update_expense(
+            expense_id,
+            {
+                "archived_at": datetime.now(timezone.utc).isoformat(),
+                "archived_by": str(operator or "").strip() or "Unknown operator",
+            },
+        )
+
+    def restore_expense(self, expense_id: Any) -> List[Dict[str, Any]]:
+        return self.update_expense(
+            expense_id,
+            {"archived_at": None, "archived_by": None},
+        )
+
+    def list_archived_expenses(self) -> List[Dict[str, Any]]:
+        response = (
+            self.sb.table("expenses")
+            .select("*")
+            .not_.is_("archived_at", "null")
+            .order("archived_at", desc=True)
+            .execute()
+        )
         return list(response.data or [])
 
     def get_financial_summary(
@@ -89,6 +137,7 @@ class ExpenseRepository:
             self.sb.table("expenses")
             .select("student_id,school_year,amount")
             .in_("student_id", student_ids)
+            .is_("archived_at", "null")
         )
         if sy_filter:
             expense_query = expense_query.eq("school_year", sy_filter)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from office_app.services.supabase_client import get_supabase_client
 
@@ -45,3 +45,13 @@ class AuditRepository:
         )
         rows = list(response.data or [])
         return dict(rows[0]) if rows else None
+
+    def list_events(self, limit: int = 300) -> List[Dict[str, Any]]:
+        response = (
+            self.sb.table("app_audit_log")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(max(1, min(int(limit), 1000)))
+            .execute()
+        )
+        return list(response.data or [])
