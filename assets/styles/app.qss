@@ -393,6 +393,18 @@ QWidget#Card[tone="graduated"] *#CardValue { color: @graduated; }
 *#DashboardState[state="loading"] { background: @accent_soft; color: @warning; }
 *#DashboardState[state="success"] { background: @success_soft; color: @success; }
 *#DashboardState[state="danger"] { background: @danger_soft; color: @danger; }
+*#DashboardGreeting, *#DashboardGreetingName {
+    color: @text_primary;
+    font-family: "Inter", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    font-size: 20px;
+    font-weight: 700;
+}
+*#DashboardGreetingName { color: @primary; }
+*#DashboardGreetingCaption {
+    color: @text_secondary;
+    font-size: @font_caption;
+    font-weight: 400;
+}
 QWidget#DashboardMetricCard {
     background: @surface;
     border: 1px solid @border;

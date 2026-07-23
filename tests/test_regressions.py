@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
 )
-from app import StartupDialog, StudentApp
+from app import BreathingLabel, StartupDialog, StudentApp
 from office_app import app_config
 from office_app.repositories.student_repository import StudentRepository
 from office_app.repositories.expense_repository import ExpenseRepository
@@ -1144,6 +1144,17 @@ class RegressionTests(unittest.TestCase):
             card.graphicsEffect(),
             QGraphicsDropShadowEffect,
         )
+        self.assertIsNotNone(application)
+
+    def test_breathing_label_respects_reduced_motion(self):
+        application = _qt_application()
+        label = BreathingLabel("Joshua", motion_enabled=True)
+        QTest.qWait(850)
+        moving_opacity = label.graphicsEffect().opacity()
+        label.set_motion_enabled(False)
+
+        self.assertLess(moving_opacity, 0.98)
+        self.assertEqual(label.graphicsEffect().opacity(), 1.0)
         self.assertIsNotNone(application)
 
     def test_interactive_container_cards_do_not_composite_children_by_default(self):

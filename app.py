@@ -377,6 +377,36 @@ class AnimatedSplashPanel(QWidget):
 
 # ── STARTUP SPLASH ────────────────────────────────────────────────────────────
 
+class BreathingLabel(NativeLabel):
+    """A quiet repeating emphasis for personalized, non-critical copy."""
+
+    def __init__(self, text="", parent=None, *, motion_enabled=True):
+        super().__init__(text, parent)
+        self._breathing_effect = QGraphicsOpacityEffect(self)
+        self._breathing_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self._breathing_effect)
+        self._breathing_animation = QPropertyAnimation(
+            self._breathing_effect,
+            b"opacity",
+            self,
+        )
+        self._breathing_animation.setDuration(2800)
+        self._breathing_animation.setKeyValueAt(0.0, 1.0)
+        self._breathing_animation.setKeyValueAt(0.5, 0.76)
+        self._breathing_animation.setKeyValueAt(1.0, 1.0)
+        self._breathing_animation.setEasingCurve(
+            QEasingCurve.Type.InOutSine
+        )
+        self._breathing_animation.setLoopCount(-1)
+        self.set_motion_enabled(motion_enabled)
+
+    def set_motion_enabled(self, enabled: bool) -> None:
+        self._breathing_animation.stop()
+        self._breathing_effect.setOpacity(1.0)
+        if enabled:
+            self._breathing_animation.start()
+
+
 class StartupDialog(QDialog):
     """Two-phase splash: (1) user selection, (2) connection progress."""
 
@@ -2078,6 +2108,9 @@ class StudentApp(QMainWindow):
         self._reduce_motion = settings.value(
             "reduce_motion", False, type=bool
         )
+        greeting_name = getattr(self, "dashboard_greeting_name", None)
+        if greeting_name is not None:
+            greeting_name.set_motion_enabled(not self._reduce_motion)
         if self._reduce_motion and hasattr(self, "_sync_pulse"):
             self._sync_pulse.stop()
         set_large_text(settings.value("large_text", False, type=bool))
@@ -2443,6 +2476,7 @@ class StudentApp(QMainWindow):
         if self._dashboard_revealed:
             return
         self._dashboard_revealed = True
+        self._dashboard_intro.show()
         fade_in(
             self._dashboard_intro,
             motion_enabled=not self._reduce_motion,
@@ -2525,6 +2559,13 @@ class StudentApp(QMainWindow):
         operator_avatar = getattr(self, "sidebar_operator_avatar", None)
         if operator_avatar is not None:
             operator_avatar.setPixmap(sidebar_operator_pixmap(name))
+        greeting_name = getattr(self, "dashboard_greeting_name", None)
+        if greeting_name is not None:
+            greeting_name.setText(name)
+            greeting_name.setAccessibleName(
+                f"Current operator: {name}"
+            )
+            greeting_name.set_motion_enabled(not self._reduce_motion)
         selector = getattr(self, "user_combo", None)
         if selector is not None:
             selector.setToolTip(
@@ -2773,23 +2814,46 @@ class StudentApp(QMainWindow):
         widget.setObjectName("DashboardContent")
         layout = QVBoxLayout(widget)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
         layout.setContentsMargins(0, 0, 6, 18)
         scroll.setWidget(widget)
         page_layout.addWidget(scroll)
 
         overview_row = QHBoxLayout()
-        overview_lbl = StrongBodyLabel("Current synchronized records")
-        overview_lbl.setObjectName("SectionTitle")
-        self._dashboard_intro = overview_lbl
-        overview_lbl.hide()
+        overview_row.setSpacing(5)
+        greeting_prefix = NativeLabel("Hello,")
+        greeting_prefix.setObjectName("DashboardGreeting")
+        self.dashboard_greeting_name = BreathingLabel(
+            self._current_operator,
+            motion_enabled=not self._reduce_motion,
+        )
+        self.dashboard_greeting_name.setObjectName("DashboardGreetingName")
+        self.dashboard_greeting_name.setAccessibleName(
+            f"Current operator: {self._current_operator}"
+        )
+        greeting_caption = NativeLabel(
+            "Here is today’s synchronized student-support picture."
+        )
+        greeting_caption.setObjectName("DashboardGreetingCaption")
+        self._dashboard_intro = greeting_caption
+        greeting_caption.hide()
+        greeting_copy = QVBoxLayout()
+        greeting_copy.setContentsMargins(0, 0, 0, 0)
+        greeting_copy.setSpacing(1)
+        greeting_line = QHBoxLayout()
+        greeting_line.setContentsMargins(0, 0, 0, 0)
+        greeting_line.setSpacing(5)
+        greeting_line.addWidget(greeting_prefix)
+        greeting_line.addWidget(self.dashboard_greeting_name)
+        greeting_line.addStretch()
+        greeting_copy.addLayout(greeting_line)
+        greeting_copy.addWidget(greeting_caption)
         self.dashboard_state_label = QLabel("Preparing data")
         self.dashboard_state_label.setObjectName("DashboardState")
         self.dashboard_state_label.setFixedHeight(26)
         self.dashboard_state_label.setAccessibleName("Dashboard refresh status")
         self.dashboard_state_label.hide()
-        overview_row.addWidget(overview_lbl)
-        overview_row.addStretch()
+        overview_row.addLayout(greeting_copy, 1)
         overview_row.addWidget(self.dashboard_state_label)
         layout.addLayout(overview_row)
 
@@ -2832,10 +2896,10 @@ class StudentApp(QMainWindow):
 
         budget_card = Card()
         budget_card.setObjectName("DashboardPanel")
-        budget_card.setFixedHeight(242)
+        budget_card.setFixedHeight(210)
         budget_layout = QVBoxLayout(budget_card)
-        budget_layout.setContentsMargins(20, 16, 20, 14)
-        budget_layout.setSpacing(7)
+        budget_layout.setContentsMargins(20, 14, 20, 12)
+        budget_layout.setSpacing(5)
         budget_title = StrongBodyLabel("Budget overview")
         budget_title.setObjectName("CardHeading")
         budget_caption = QLabel("Current-school-year allocation and utilization")
@@ -2893,10 +2957,10 @@ class StudentApp(QMainWindow):
 
         progress_card = Card()
         progress_card.setObjectName("DashboardPanel")
-        progress_card.setFixedHeight(242)
+        progress_card.setFixedHeight(210)
         progress_layout = QVBoxLayout(progress_card)
-        progress_layout.setContentsMargins(20, 16, 20, 14)
-        progress_layout.setSpacing(5)
+        progress_layout.setContentsMargins(20, 14, 20, 12)
+        progress_layout.setSpacing(4)
         progress_title = StrongBodyLabel("Student progress")
         progress_title.setObjectName("CardHeading")
         progress_caption = QLabel("Profile completion across active records")
@@ -2931,10 +2995,10 @@ class StudentApp(QMainWindow):
 
         recent_card = Card()
         recent_card.setObjectName("DashboardPanel")
-        recent_card.setFixedHeight(246)
+        recent_card.setFixedHeight(222)
         recent_layout = QVBoxLayout(recent_card)
-        recent_layout.setContentsMargins(14, 12, 14, 10)
-        recent_layout.setSpacing(7)
+        recent_layout.setContentsMargins(14, 10, 14, 8)
+        recent_layout.setSpacing(5)
         recent_header = QHBoxLayout()
         recent_copy = QVBoxLayout()
         recent_copy.setSpacing(2)
@@ -2974,6 +3038,9 @@ class StudentApp(QMainWindow):
         sync_panel.setFixedHeight(84)
         sync_panel.hide()
         layout.addWidget(sync_panel)
+        # Keep the operational sections tightly grouped. Surplus viewport
+        # height belongs after the content, not between nested layouts.
+        layout.addStretch(1)
         self.stacked_widget.addWidget(page)
 
     def _build_sync_panel(self):
@@ -3268,7 +3335,7 @@ class StudentApp(QMainWindow):
         card.setObjectName("DashboardMetricCard")
         card.setProperty("tone", tone)
         card.setMinimumWidth(0)
-        card.setFixedHeight(104)
+        card.setFixedHeight(94)
         shell = QHBoxLayout(card)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
@@ -3280,8 +3347,8 @@ class StudentApp(QMainWindow):
         shell.addWidget(marker)
         content = QWidget()
         l = QVBoxLayout(content)
-        l.setContentsMargins(14, 12, 14, 11)
-        l.setSpacing(2)
+        l.setContentsMargins(14, 10, 14, 9)
+        l.setSpacing(1)
         t = StrongBodyLabel(title_text)
         t.setObjectName("CardTitle")
         t.setWordWrap(True)
