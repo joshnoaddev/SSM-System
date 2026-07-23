@@ -73,9 +73,8 @@ QFrame#HeaderMark { background: @accent; border-radius: 2px; }
 QWidget#Sidebar, QWidget#FluentSidebar {
     background: @sidebar;
     border: none;
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
 }
-QWidget#BrandPanel { background: transparent; border: none; }
+QWidget#BrandPanel, QWidget#BrandCopy { background: transparent; border: none; }
 QWidget#BrandLogoWell {
     background: transparent;
     border: none;
@@ -84,45 +83,51 @@ QWidget#BrandLogoWell {
 *#BrandLogo, *#BrandLogoFallback { background: transparent; color: @sidebar_text; }
 *#BrandLogoFallback { font-size: 28px; font-weight: 700; }
 *#BrandTitle {
-    color: @sidebar_text;
+    color: @sidebar_active_text;
     font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 16px;
     font-weight: 700;
 }
-*#BrandSubtitle { color: @sidebar_muted; font-size: 10px; font-weight: 550; }
+*#BrandSubtitle {
+    color: @sidebar_subtitle;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 11px;
+    font-weight: 400;
+}
 QFrame#SidebarDivider {
     border: none;
     background: rgba(255, 255, 255, 0.09);
 }
 *#SidebarGroupLabel {
-    color: @sidebar_muted;
-    padding: 3px 10px 5px 10px;
+    color: @sidebar_group;
+    padding: 0 0 0 12px;
     font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.7px;
+    font-weight: 600;
+    letter-spacing: 0;
 }
 QPushButton[class="SidebarBtn"] {
-    min-height: 22px;
-    max-height: 22px;
-    padding: 8px 10px;
+    min-height: 24px;
+    max-height: 24px;
+    padding: 8px 13px;
     border: 1px solid transparent;
     border-radius: 8px;
     background: transparent;
-    color: @sidebar_muted;
+    color: @sidebar_nav;
     text-align: left;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 500;
 }
-QPushButton[class="SidebarBtn"]:hover { background: @sidebar_surface; color: @sidebar_text; }
-QPushButton[class="SidebarBtn"]:pressed { background: @sidebar_selected; color: @sidebar_text; }
+QPushButton[class="SidebarBtn"]:hover { background: @sidebar_surface; color: @sidebar_active_text; }
+QPushButton[class="SidebarBtn"]:pressed { background: @sidebar_selected; color: @sidebar_active_text; }
 QPushButton[class="SidebarBtn"]:checked {
     background: @sidebar_selected;
-    color: @sidebar_text;
+    color: @sidebar_active_text;
     border: 1px solid transparent;
     border-left: 3px solid @accent;
-    padding-left: 8px;
-    font-weight: 700;
+    padding-left: 10px;
+    font-weight: 600;
 }
 QPushButton[class="SidebarBtn"]:focus { border: 1px solid rgba(255, 255, 255, 0.68); }
 QPushButton[class="SidebarBtn"]:checked:focus {
@@ -132,11 +137,11 @@ QPushButton[class="SidebarBtn"]:checked:focus {
 QPushButton[class="SidebarBtn"]:disabled { background: transparent; color: @sidebar_muted; }
 QWidget#OperatorPanel {
     background: @sidebar_surface;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid @sidebar_border;
     border-radius: 9px;
 }
 *#SidebarCaption {
-    color: @sidebar_muted;
+    color: @sidebar_operator;
     padding: 0;
     font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 8px;
@@ -144,17 +149,19 @@ QWidget#OperatorPanel {
 }
 *#OperatorAvatar { background: transparent; border: none; }
 QWidget#Sidebar QComboBox#SidebarUserCombo {
-    min-height: 18px;
-    padding: 2px 28px 2px 0;
+    min-height: 0;
+    max-height: 27px;
+    padding: 0 24px 0 0;
     border: none;
     border-radius: 0;
     background: transparent;
-    color: @sidebar_text;
-    font-size: 13px;
-    font-weight: 650;
+    color: @sidebar_active_text;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
 }
 QWidget#Sidebar QComboBox#SidebarUserCombo::drop-down {
-    width: 28px;
+    width: 24px;
     border: none;
     background: transparent;
 }
@@ -181,10 +188,12 @@ QPushButton#SidebarRefreshBtn:hover { background: @sidebar_surface; color: @side
 QPushButton#SidebarRefreshBtn:pressed { background: @sidebar_selected; }
 QPushButton#SidebarRefreshBtn:focus { border: 1px solid @accent; }
 *#SidebarVersion {
-    color: @sidebar_muted;
+    color: @sidebar_version;
+    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 8px;
-    padding-top: 2px;
-    letter-spacing: 0.7px;
+    padding: 0;
+    font-weight: 500;
+    letter-spacing: 0;
 }
 
 /* Buttons */

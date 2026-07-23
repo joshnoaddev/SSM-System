@@ -110,6 +110,12 @@ def app_version_label() -> str:
 
 def render_qss(template: str) -> str:
     """Expand @token references because Qt QSS does not support variables."""
+    # The bundled variable file registers with Qt under its internal family
+    # name, "Inter Variable". Figma calls the same face "Inter".
+    template = template.replace(
+        'font-family: "Inter",',
+        'font-family: "Inter Variable",',
+    )
     dropdown_icon = resource_path(
         os.path.join("assets", "icons", "chevron-down.svg")
     ).replace("\\", "/")
@@ -137,11 +143,15 @@ def register_app_fonts() -> None:
     global _APP_FONTS_REGISTERED
     if _APP_FONTS_REGISTERED:
         return
-    font_path = resource_path(os.path.join("assets", "fonts", "InterVariable.ttf"))
-    if QFontDatabase.addApplicationFont(font_path) < 0:
-        logging.getLogger(__name__).warning(
-            "Could not register bundled Inter font at %s", font_path
-        )
+    for file_name in (
+        "InterVariable.ttf",
+        "NotoSansSymbols2-Regular.ttf",
+    ):
+        font_path = resource_path(os.path.join("assets", "fonts", file_name))
+        if QFontDatabase.addApplicationFont(font_path) < 0:
+            logging.getLogger(__name__).warning(
+                "Could not register bundled font at %s", font_path
+            )
     _APP_FONTS_REGISTERED = True
 
 
@@ -226,28 +236,32 @@ def startup_operator_pixmap(name: str, *, selected: bool, size: int = 32) -> QPi
     return pixmap
 
 
-def sidebar_navigation_icon(icon_name: str) -> QIcon:
-    """Return a check-state-aware icon for the custom navigation rail."""
+def sidebar_navigation_icon(symbol: str) -> QIcon:
+    """Render the exact symbol glyphs used by the Figma navigation rail."""
     icon = QIcon()
-    normal_path = resource_path(
-        os.path.join("assets", "icons", icon_name)
-    )
-    stem, extension = os.path.splitext(icon_name)
-    selected_path = resource_path(
-        os.path.join("assets", "icons", f"{stem}-active{extension}")
-    )
-    icon.addFile(
-        normal_path,
-        QSize(20, 20),
-        QIcon.Mode.Normal,
-        QIcon.State.Off,
-    )
-    if os.path.exists(selected_path):
-        icon.addFile(
-            selected_path,
-            QSize(20, 20),
+    for selected, color in (
+        (False, theme_color("sidebar_muted")),
+        (True, theme_color("sidebar_text")),
+    ):
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(color)
+        font = QFont("Noto Sans Symbols 2")
+        font.setPixelSize(16)
+        font.setWeight(QFont.Weight.Medium)
+        painter.setFont(font)
+        painter.drawText(
+            QRectF(0, -2, 20, 20),
+            Qt.AlignmentFlag.AlignCenter,
+            symbol,
+        )
+        painter.end()
+        icon.addPixmap(
+            pixmap,
             QIcon.Mode.Normal,
-            QIcon.State.On,
+            QIcon.State.On if selected else QIcon.State.Off,
         )
     return icon
 
@@ -281,7 +295,7 @@ def set_logo_pixmap(label, width, height, fallback_text="\u271d"):
     painter.setBrush(theme_color("accent"))
     painter.drawEllipse(bounds)
     painter.setPen(theme_color("primary"))
-    font = QFont("Inter", max(6, int(diameter * 0.21)))
+    font = QFont("Inter Variable", max(6, int(diameter * 0.21)))
     font.setWeight(QFont.Weight.Bold)
     painter.setFont(font)
     painter.drawText(bounds, Qt.AlignmentFlag.AlignCenter, "SSM")
@@ -1456,6 +1470,10 @@ class StudentApp(QMainWindow):
 
         # Initialize Data
         self.nav_dashboard()
+        # Keep the Figma rail visually quiet after launch and mouse navigation,
+        # while retaining a visible focus ring for keyboard users who Tab into it.
+        self.stacked_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.stacked_widget.setFocus(Qt.FocusReason.OtherFocusReason)
         self._start_keepalive()
         # --- Start Auto-Update Poller (Checks every 5 minutes) ---
         self._start_update_poller()
@@ -1798,40 +1816,49 @@ class StudentApp(QMainWindow):
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setFixedWidth(224)
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(12, 18, 12, 10)
-        sidebar_layout.setSpacing(4)
+        sidebar_layout.setContentsMargins(12, 0, 12, 10)
+        sidebar_layout.setSpacing(0)
 
         brand_container = QWidget()
         brand_container.setObjectName("BrandPanel")
-        brand_container.setFixedHeight(66)
+        brand_container.setFixedHeight(72)
         brand_layout = QHBoxLayout(brand_container)
-        brand_layout.setContentsMargins(6, 2, 6, 2)
-        brand_layout.setSpacing(11)
-
-        logo_well = QWidget()
-        logo_well.setObjectName("BrandLogoWell")
-        logo_well.setFixedSize(42, 42)
-        logo_layout = QVBoxLayout(logo_well)
-        logo_layout.setContentsMargins(3, 4, 3, 4)
+        brand_layout.setContentsMargins(12, 24, 0, 11)
+        brand_layout.setSpacing(12)
 
         logo_lbl = NativeLabel()
         logo_lbl.setObjectName("BrandLogo")
-        set_logo_pixmap(logo_lbl, 36, 34)
-        logo_layout.addWidget(logo_lbl)
+        set_logo_pixmap(logo_lbl, 36, 36)
 
-        brand_copy = QVBoxLayout()
-        brand_copy.setSpacing(1)
+        brand_copy_widget = QWidget()
+        brand_copy_widget.setObjectName("BrandCopy")
+        brand_copy_widget.setFixedHeight(37)
+        brand_copy = QVBoxLayout(brand_copy_widget)
+        brand_copy.setContentsMargins(0, 0, 0, 0)
+        brand_copy.setSpacing(2)
         self.brand_lbl = NativeLabel("SSM Office")
         self.brand_lbl.setObjectName("BrandTitle")
+        self.brand_lbl.setFixedHeight(20)
+        self.brand_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
         brand_sub = NativeLabel("Student records")
         brand_sub.setObjectName("BrandSubtitle")
+        brand_sub.setFixedHeight(15)
+        brand_sub.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
         brand_copy.addWidget(self.brand_lbl)
         brand_copy.addWidget(brand_sub)
-        brand_layout.addWidget(logo_well)
-        brand_layout.addLayout(brand_copy, 1)
+        brand_layout.addWidget(logo_lbl, alignment=Qt.AlignmentFlag.AlignTop)
+        brand_layout.addWidget(
+            brand_copy_widget,
+            1,
+            alignment=Qt.AlignmentFlag.AlignTop,
+        )
         sidebar_layout.addWidget(brand_container)
 
-        sidebar_layout.addSpacing(10)
+        sidebar_layout.addSpacing(28)
 
         self.btn_dash = NativePushButton("Dashboard")
         self.btn_stud = NativePushButton("Students")
@@ -1842,25 +1869,26 @@ class StudentApp(QMainWindow):
         self.btn_settings = NativePushButton("Settings")
 
         button_icons = {
-            self.btn_dash: "nav-home.svg",
-            self.btn_stud: "nav-students.svg",
-            self.btn_add: "nav-add.svg",
-            self.btn_exp: "nav-expenses.svg",
-            self.btn_coordinators: "nav-coordinators.svg",
-            self.btn_workbook: "nav-workbook.svg",
-            self.btn_settings: "nav-settings.svg",
+            self.btn_dash: "⌂",
+            self.btn_stud: "◎",
+            self.btn_add: "+",
+            self.btn_exp: "▤",
+            self.btn_coordinators: "⌕",
+            self.btn_workbook: "▧",
+            self.btn_settings: "⚙",
         }
-        for btn, icon_name in button_icons.items():
+        for btn, icon_symbol in button_icons.items():
             btn.setProperty("class", "SidebarBtn")
             btn.setCheckable(True)
+            btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFixedHeight(40)
+            btn.setFixedHeight(42)
             btn.setSizePolicy(
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Fixed,
             )
-            btn.setIcon(sidebar_navigation_icon(icon_name))
-            btn.setIconSize(QSize(18, 18))
+            btn.setIcon(sidebar_navigation_icon(icon_symbol))
+            btn.setIconSize(QSize(20, 20))
             btn.setAccessibleName(f"Open {btn.text()}")
 
         self.btn_dash.clicked.connect(self.nav_dashboard)
@@ -1873,7 +1901,12 @@ class StudentApp(QMainWindow):
 
         records_label = NativeLabel("RECORDS")
         records_label.setObjectName("SidebarGroupLabel")
+        records_label.setFixedHeight(13)
+        records_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
         sidebar_layout.addWidget(records_label)
+        sidebar_layout.addSpacing(14)
         for button in (
             self.btn_dash,
             self.btn_stud,
@@ -1882,25 +1915,33 @@ class StudentApp(QMainWindow):
             self.btn_coordinators,
         ):
             sidebar_layout.addWidget(button)
+            if button is not self.btn_coordinators:
+                sidebar_layout.addSpacing(6)
 
-        sidebar_layout.addSpacing(10)
+        sidebar_layout.addSpacing(23)
         tools_label = NativeLabel("TOOLS")
         tools_label.setObjectName("SidebarGroupLabel")
+        tools_label.setFixedHeight(13)
+        tools_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
         sidebar_layout.addWidget(tools_label)
+        sidebar_layout.addSpacing(14)
         sidebar_layout.addWidget(self.btn_workbook)
+        sidebar_layout.addSpacing(6)
         sidebar_layout.addWidget(self.btn_settings)
         sidebar_layout.addStretch()
 
         user_panel = QWidget()
         user_panel.setObjectName("OperatorPanel")
         user_panel.setFixedHeight(62)
-        user_layout = QVBoxLayout(user_panel)
-        user_layout.setContentsMargins(10, 7, 10, 7)
-        user_layout.setSpacing(3)
         user_label = NativeLabel("ACTIVE OPERATOR")
         user_label.setObjectName("SidebarCaption")
+        user_label.setParent(user_panel)
+        user_label.setGeometry(12, 7, 152, 14)
         self.sidebar_operator_avatar = NativeLabel()
         self.sidebar_operator_avatar.setObjectName("OperatorAvatar")
+        self.sidebar_operator_avatar.setParent(user_panel)
         self.sidebar_operator_avatar.setFixedSize(0, 0)
         self.sidebar_operator_avatar.hide()
         self.sidebar_operator_avatar.setPixmap(
@@ -1910,7 +1951,8 @@ class StudentApp(QMainWindow):
         self.user_combo.addItems(USERS)
         self.user_combo.setCurrentText(self._initial_user)
         self.user_combo.setObjectName("SidebarUserCombo")
-        self.user_combo.setMinimumHeight(36)
+        self.user_combo.setParent(user_panel)
+        self.user_combo.setGeometry(12, 24, 176, 31)
         self.user_combo.setAccessibleName("Audit identity")
         self.user_combo.setAccessibleDescription(
             "Choose the office user whose name will be written to the activity log."
@@ -1919,10 +1961,8 @@ class StudentApp(QMainWindow):
             "Choose the name written to the activity log"
         )
         self.user_combo.currentTextChanged.connect(self._on_user_changed)
-        user_layout.addWidget(user_label)
-        user_layout.addWidget(self.user_combo)
         sidebar_layout.addWidget(user_panel)
-        sidebar_layout.addSpacing(4)
+        sidebar_layout.addSpacing(6)
 
         self.sidebar_refresh_btn = NativePushButton("Refresh data")
         self.sidebar_refresh_btn.setObjectName("SidebarRefreshBtn")
@@ -1941,6 +1981,7 @@ class StudentApp(QMainWindow):
         )
         version_label.setObjectName("SidebarVersion")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        version_label.setFixedHeight(10)
         sidebar_layout.addWidget(version_label)
 
         layout.addWidget(self.sidebar)

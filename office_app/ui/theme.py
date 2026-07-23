@@ -34,6 +34,13 @@ LIGHT_THEME = {
     "sidebar_selected": "#19574B",
     "sidebar_text": "#F8F6EF",
     "sidebar_muted": "#A9C9BF",
+    "sidebar_nav": "#D9E8E3",
+    "sidebar_subtitle": "#BBD3CA",
+    "sidebar_active_text": "#FFFFFF",
+    "sidebar_group": "#8FC2B2",
+    "sidebar_operator": "#9FD0C2",
+    "sidebar_version": "#9FC8BC",
+    "sidebar_border": "#246458",
 
     # Semantic — success
     "success": "#0E8A68",
@@ -114,6 +121,13 @@ DARK_THEME = {
     "sidebar_selected": "#203B30",
     "sidebar_text": "#F7F5EE",
     "sidebar_muted": "#9DB1A7",
+    "sidebar_nav": "#D9E8E3",
+    "sidebar_subtitle": "#BBD3CA",
+    "sidebar_active_text": "#FFFFFF",
+    "sidebar_group": "#8FC2B2",
+    "sidebar_operator": "#9FD0C2",
+    "sidebar_version": "#9FC8BC",
+    "sidebar_border": "#246458",
 
     # Semantic — success
     "success": "#66bb6a",
