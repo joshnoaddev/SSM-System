@@ -11,6 +11,8 @@ class StudentListService:
     """Business logic for student list filters, area counts, and grade options."""
 
     ALL_GRADES = "All years"
+    SORT_LAST_NAME = "last_name"
+    SORT_SPONSOR = "sponsor"
 
     def __init__(self, student_service: StudentService | None = None) -> None:
         self.student_service = student_service or StudentService()
@@ -60,3 +62,9 @@ class StudentListService:
             grades_by_key.values(),
             key=self.student_service.grade_sort_key,
         )
+
+    def sort_order(self, sort_key: str) -> List[str]:
+        """Return a stable repository order for the selected directory sort."""
+        if sort_key == self.SORT_SPONSOR:
+            return ["sponsor", "last_name", "first_name", "id"]
+        return ["last_name", "first_name", "id"]

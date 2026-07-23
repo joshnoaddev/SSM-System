@@ -104,6 +104,20 @@ class StudentListView(QWidget):
         self.filter_status.setFixedWidth(124)
         self.filter_status.setFixedHeight(38)
 
+        self.sort_select = ComboBox()
+        self.sort_select.addItem(
+            "Last name", self.student_list_service.SORT_LAST_NAME,
+        )
+        self.sort_select.addItem(
+            "Sponsor", self.student_list_service.SORT_SPONSOR,
+        )
+        self.sort_select.setAccessibleName("Sort students by")
+        self.sort_select.setAccessibleDescription(
+            "Sort the student directory by last name or sponsor."
+        )
+        self.sort_select.setFixedWidth(138)
+        self.sort_select.setFixedHeight(34)
+
         clear_btn = ActionButton("Clear", variant="tertiary")
         refresh_btn = ActionButton("Refresh", variant="tertiary")
         self.import_btn = ActionButton("Import", variant="tertiary")
@@ -138,9 +152,11 @@ class StudentListView(QWidget):
         self.count_label.setObjectName("StudentDirectoryLabel")
         actions_row.addWidget(self.count_label)
         actions_row.addStretch(1)
-        sorted_label = QLabel("Sorted by last name")
-        sorted_label.setObjectName("Caption")
-        actions_row.addWidget(sorted_label)
+        sort_label = QLabel("Sort by")
+        sort_label.setObjectName("Caption")
+        sort_label.setBuddy(self.sort_select)
+        actions_row.addWidget(sort_label)
+        actions_row.addWidget(self.sort_select)
         # Clear and refresh are covered by the search affordance and shared
         # page header. Import remains callable from Workbook without adding a
         # second, visually noisy action cluster here.
@@ -161,6 +177,7 @@ class StudentListView(QWidget):
         self.search_sponsor.textChanged.connect(self._search_timer.start)
         self.filter_grade.currentTextChanged.connect(self.load_student_list)
         self.filter_status.currentTextChanged.connect(self.load_student_list)
+        self.sort_select.currentTextChanged.connect(self.load_student_list)
 
         # Kept as a hidden compatibility control for export state restoration.
         self.area_select = ComboBox()
@@ -305,6 +322,9 @@ class StudentListView(QWidget):
             "Inactive": "Inactive/Removed",
         }.get(status_text, status_text)
         grade = self.filter_grade.currentText()
+        order_by = self.student_list_service.sort_order(
+            self.sort_select.currentData()
+        )
         columns = (
             "id,last_name,first_name,birthday,gender,grade,sponsor,area,status,"
             "address,city,contact,school,parents,course,photo_url,remarks,"
@@ -321,7 +341,7 @@ class StudentListView(QWidget):
                 sponsor_query=sponsor_q or None,
                 area=area_q or None,
                 area_exact=True,
-                order_by=["area", "last_name", "id"],
+                order_by=order_by,
                 limit=self._page_size,
                 offset=offset,
             )
@@ -391,13 +411,20 @@ class StudentListView(QWidget):
         return self._run_background(fetch_rows, apply_rows, show_error)
 
     def clear_student_filters(self):
-        for widget in (self.search_name, self.search_sponsor, self.filter_grade, self.filter_status):
+        for widget in (
+            self.search_name, self.search_sponsor, self.filter_grade,
+            self.filter_status, self.sort_select,
+        ):
             widget.blockSignals(True)
         self.search_name.clear()
         self.search_sponsor.clear()
         self.filter_grade.setCurrentIndex(0)
         self.filter_status.setCurrentIndex(0)
-        for widget in (self.search_name, self.search_sponsor, self.filter_grade, self.filter_status):
+        self.sort_select.setCurrentIndex(0)
+        for widget in (
+            self.search_name, self.search_sponsor, self.filter_grade,
+            self.filter_status, self.sort_select,
+        ):
             widget.blockSignals(False)
         self._select_area("", reload=False)
         self.load_student_list()
@@ -581,6 +608,9 @@ class StudentListView(QWidget):
             "Inactive": "Inactive/Removed",
         }.get(status_text, status_text)
         grade = self.filter_grade.currentText()
+        order_by = self.student_list_service.sort_order(
+            self.sort_select.currentData()
+        )
         self.export_btn.setEnabled(False)
         self._status_message("Exporting students...", 30000)
 
@@ -588,7 +618,7 @@ class StudentListView(QWidget):
             rows = self.student_repository.search_students(
                 columns=columns, name_query=name_q or None, sponsor_query=sponsor_q or None,
                 area=area_q if area_q and area_q != "Choose area" else None,
-                area_exact=True, order_by=["area", "last_name", "id"],
+                area_exact=True, order_by=order_by,
             )
             rows = self.student_list_service.filter_rows(
                 self._filter_current_rows(rows),

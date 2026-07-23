@@ -414,6 +414,18 @@ class RegressionTests(unittest.TestCase):
 
         self.assertEqual(["1"], [row["id"] for row in rows])
 
+    def test_student_directory_sponsor_sort_is_stable(self):
+        service = StudentListService()
+
+        self.assertEqual(
+            service.sort_order(service.SORT_SPONSOR),
+            ["sponsor", "last_name", "first_name", "id"],
+        )
+        self.assertEqual(
+            service.sort_order(service.SORT_LAST_NAME),
+            ["last_name", "first_name", "id"],
+        )
+
     def test_name_search_uses_quoted_server_filter(self):
         client = _StudentClient()
         repository = StudentRepository(client=client)

@@ -258,9 +258,9 @@ QFrame#ProfileAccent[status="graduated"] { background: @graduated; }
 *#ProfileAvatar {
     background: @graduated_soft;
     border: none;
-    border-radius: 36px;
+    border-radius: 48px;
     color: @graduated;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
 }
 QWidget#ProfileInfoCard {
@@ -410,15 +410,54 @@ QWidget#ExpenseContextBar {
 }
 *#ExpenseStudentName { color: @text_primary; font-size: 13px; font-weight: 700; }
 QWidget#SettingsSectionRow { background: transparent; border: none; }
-QWidget#SettingsToggleRow {
+QFrame#SettingsPreferenceRow {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid @border_subtle;
+    border-radius: 0;
+}
+*#SettingsPreferenceTitle {
+    color: @text_primary;
+    font-size: 13px;
+    font-weight: 700;
+}
+*#SettingsPreferenceCopy {
+    color: @text_secondary;
+    font-size: 11px;
+}
+*#SettingsProjectValue {
+    color: @text_primary;
+    font-size: 12px;
+    font-weight: 650;
+}
+QFrame#SettingsTokenPanel {
     background: @surface_subtle;
     border: 1px solid @border_subtle;
     border-radius: 8px;
 }
-QWidget#DatabaseStatePanel {
-    background: @surface_subtle;
-    border: 1px solid @border_subtle;
-    border-radius: 8px;
+QFrame#SettingsSyncAccent {
+    background: @accent;
+    border: none;
+    border-radius: 2px;
+}
+*#SettingsMetaLabel {
+    color: @text_secondary;
+    font-size: 10px;
+    font-weight: 650;
+}
+*#SettingsMetaValue {
+    color: @text_primary;
+    font-size: 12px;
+    font-weight: 650;
+}
+*#SettingsSyncNotice {
+    padding: 0 16px;
+    background: @warning_soft;
+    border: none;
+    border-radius: 7px;
+    color: @warning;
+    font-size: 11px;
+    font-weight: 550;
 }
 QWidget#SyncPanel {
     background: transparent;
@@ -432,6 +471,15 @@ QFrame#SyncAccentRail { background: @accent; border: none; border-radius: 2px; }
 *#SyncMetaValue { color: @text_primary; font-size: @font_body; font-weight: 700; }
 *#SyncStateBadge[state="success"], *#SyncTokenBadge[state="success"] {
     background: @success_soft; border-color: @success; color: @success;
+}
+*#SettingsDatabaseBadge[state="success"] {
+    background: @success_soft; border-color: @success; color: @success;
+}
+*#SettingsDatabaseBadge[state="loading"] {
+    background: @accent_soft; border-color: @accent; color: @warning;
+}
+*#SettingsDatabaseBadge[state="danger"] {
+    background: @danger_soft; border-color: @danger; color: @danger;
 }
 *#SyncStateBadge[state="warning"], *#SyncTokenBadge[state="warning"] {
     background: @warning_soft; border-color: @warning; color: @warning;

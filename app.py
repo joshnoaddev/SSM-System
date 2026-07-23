@@ -101,7 +101,7 @@ from office_app.ui.configuration_dialog import (
     friendly_connection_error,
 )
 from office_app.ui.views import StudentListView
-from office_app.ui.views.settings_view import SettingsView
+from office_app.ui.views.settings_figma_view import SettingsView
 from office_app.services.updater_service import UpdaterService
 
 def app_version_label() -> str:
@@ -1410,6 +1410,12 @@ class StudentApp(QMainWindow):
         self.settings_view.connection_settings_requested.connect(
             self._open_connection_settings
         )
+        self.settings_view.test_connection_requested.connect(
+            self._test_settings_connection
+        )
+        self.settings_view.sync_now_requested.connect(
+            self.sync_google_sheet_now
+        )
         self.settings_view.preferences_changed.connect(
             self._apply_accessibility_preferences
         )
@@ -1446,6 +1452,9 @@ class StudentApp(QMainWindow):
         badge = getattr(self, "connection_badge", None)
         if badge is not None:
             badge.set_state(state, text)
+        settings_view = getattr(self, "settings_view", None)
+        if settings_view is not None:
+            settings_view.set_connection_state(text, state)
 
     def _refresh_database_updated_label(self):
         if self._last_database_update_at is None:
@@ -1513,7 +1522,10 @@ class StudentApp(QMainWindow):
             4: ("Expenses", "Budget and expense history for the selected student"),
             5: ("Workbook", "Review and safely update the local master workbook"),
             6: ("Coordinators", "Contact directory for ministry coordinators"),
-            7: ("Settings", "Local workbook and appearance preferences"),
+            7: (
+                "Settings",
+                "Configure appearance, accessibility, and office connections.",
+            ),
         }
         title, subtitle = pages.get(index, ("SSM Workspace", "Student support records"))
         self.page_title_label.setText(title)
@@ -1600,6 +1612,8 @@ class StudentApp(QMainWindow):
         self._update_page_header(self.stacked_widget.currentIndex())
         if hasattr(self, "sync_panel"):
             self.sync_panel.setFixedHeight(126 if compact else 96)
+        if hasattr(self, "settings_view"):
+            self.settings_view.set_compact(compact)
         self.page_eyebrow_label.hide()
 
     def _dashboard_greeting(self) -> str:
@@ -2094,6 +2108,9 @@ class StudentApp(QMainWindow):
     def nav_settings(self):
         self._set_active_nav(self.btn_settings)
         self._switch_page(7)
+        self.settings_view.load_settings()
+        self.refresh_sync_status()
+        self._test_settings_connection(silent=True)
 
     def _on_user_changed(self, name):
         if not name:
@@ -2131,6 +2148,28 @@ class StudentApp(QMainWindow):
                 "Close and reopen the application to use it."
             ),
         )
+
+    def _test_settings_connection(self, *_args, silent=False) -> None:
+        """Test the live repository without blocking the Settings screen."""
+        self.settings_view.set_connection_state("Checking", "loading")
+
+        def connected(_rows):
+            self._mark_database_updated()
+            if not silent:
+                self.status_bar.showMessage("Database connection is working.", 4000)
+
+        def failed(error):
+            self._set_connection_state("Connection issue", "danger")
+            self.status_bar.showMessage(
+                "Could not reach the office database. Check the saved connection.",
+                7000,
+            )
+            logging.getLogger(__name__).warning(
+                "Settings connection test failed: %s",
+                str(error).strip().splitlines()[-1],
+            )
+
+        self._run_background(self.student_repository.ping, connected, failed)
 
     def _audit(self, action, entity_type, entity_id=None, details=None):
         operator = getattr(self, "_current_operator", self._initial_user)
@@ -2658,6 +2697,11 @@ class StudentApp(QMainWindow):
                 )
                 self.sync_last_label.setText("No successful sync recorded")
                 self.sync_records_label.setText("—")
+                self.settings_view.set_sync_status(
+                    configured=has_token,
+                    state="Ready to sync" if has_token else "Token needed",
+                    last_sync="No successful sync recorded",
+                )
                 return
             details = entry.get("details") or {}
             self.sync_state_badge.set_state(
@@ -2672,6 +2716,19 @@ class StudentApp(QMainWindow):
             self.sync_records_label.setText(
                 self._format_sync_counts(details)
             )
+            self.settings_view.set_sync_status(
+                configured=has_token,
+                state="Ready to sync" if has_token else "Token needed",
+                last_sync=self.sheet_sync_service.format_timestamp(
+                    entry.get("created_at")
+                ),
+                active_rows=int(details.get("students") or 0),
+                source=str(
+                    details.get("source")
+                    or details.get("source_sheet_name")
+                    or "SSM Masterlist / Current workbook"
+                ),
+            )
 
         def failed(error):
             self._sync_pulse.stop()
@@ -2681,6 +2738,11 @@ class StudentApp(QMainWindow):
             self.sync_state_badge.set_state("warning", "Status unavailable")
             self.sync_last_label.setText("Could not read the audit log")
             self.sync_records_label.setText("—")
+            self.settings_view.set_sync_status(
+                configured=bool(get_sheet_sync_token()),
+                state="Status unavailable",
+                last_sync="Could not read the audit log",
+            )
 
         return self._run_background(
             self.sheet_sync_service.latest_success,
@@ -2697,7 +2759,7 @@ class StudentApp(QMainWindow):
                 "Add the private Google Sheet sync token in Settings.", 6000
             )
             self.nav_settings()
-            self.settings_view.sync_token_input.setFocus()
+            QTimer.singleShot(0, self.settings_view.prompt_replace_token)
             return None
 
         decision = QMessageBox.question(
@@ -2752,6 +2814,7 @@ class StudentApp(QMainWindow):
                 self.student_list_view.load_student_list()
             if self.stacked_widget.currentIndex() == 6:
                 self.load_coordinators()
+            self.refresh_sync_status()
 
         def failed(error):
             self._set_sync_busy(False)
@@ -2768,6 +2831,7 @@ class StudentApp(QMainWindow):
         self.sync_now_button.setEnabled(not busy)
         self.sync_now_button.setText("Syncing…" if busy else "Sync now")
         self.refresh_data_button.setEnabled(not busy)
+        self.settings_view.set_sync_busy(busy)
 
     @staticmethod
     def _format_sync_counts(details) -> str:
@@ -3565,7 +3629,7 @@ class StudentApp(QMainWindow):
 
         self.photo_label = QLabel("Photo")
         self.photo_label.setObjectName("ProfileAvatar")
-        self.photo_label.setFixedSize(72, 72)
+        self.photo_label.setFixedSize(96, 96)
         self.photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         summary_layout.addWidget(self.photo_label)
 
