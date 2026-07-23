@@ -7,11 +7,11 @@ import threading
 
 class UpdaterService:
     # Change this whenever you compile a new .exe!
-    CURRENT_VERSION = "1.2.5"
+    CURRENT_VERSION = "1.2.6"
     CURRENT_RELEASE_NOTES = (
-        "Photo and expense actions restored",
-        "Manila records added to the database",
-        "Release notes now appear at startup",
+        "Filter by sponsor name",
+        "Show all expense years",
+        "Guided startup checks",
     )
     MIN_INSTALLER_BYTES = 40 * 1024 * 1024
 

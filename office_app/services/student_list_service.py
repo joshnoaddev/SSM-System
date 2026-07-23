@@ -63,6 +63,15 @@ class StudentListService:
             key=self.student_service.grade_sort_key,
         )
 
+    @staticmethod
+    def sponsor_options(rows: Sequence[Mapping[str, Any]]) -> List[str]:
+        sponsors = {
+            str(row.get("sponsor") or "").strip()
+            for row in rows
+            if str(row.get("sponsor") or "").strip()
+        }
+        return sorted(sponsors, key=str.casefold)
+
     def sort_order(self, sort_key: str) -> List[str]:
         """Return a stable repository order for the selected directory sort."""
         if sort_key == self.SORT_SPONSOR:

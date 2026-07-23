@@ -29,9 +29,9 @@ def render(output: Path, state: str) -> None:
         application.processEvents()
         if state == "loading":
             dialog._stack.setCurrentIndex(1)
-            dialog._set_loading_phase("database")
+            dialog._set_loading_phase("records")
             dialog._set_loading_status("Loading student records")
-            dialog._set_loading_progress(72, animate=False)
+            dialog._set_loading_progress(68, animate=False)
         application.processEvents()
         output.parent.mkdir(parents=True, exist_ok=True)
         dialog.grab().save(str(output))

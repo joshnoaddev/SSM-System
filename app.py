@@ -29,7 +29,8 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPixmap, QPainter, QColor, QPen, QIcon, QImage, QLinearGradient, QFont,
-    QRadialGradient, QPainterPath, QAction, QKeySequence, QFontDatabase
+    QRadialGradient, QPainterPath, QAction, QKeySequence, QFontDatabase,
+    QRegion,
 )
 
 from supabase import Client
@@ -383,18 +384,21 @@ class StartupDialog(QDialog):
             background: transparent;
         }
         QDialog QWidget#SplashPanel {
-            background: @primary;
+            background: @primary_hover;
             border: 1px solid @primary_selected;
             border-radius: 18px;
         }
         QDialog QWidget#SplashPage { background: transparent; }
         QDialog QLabel { background: transparent; }
         QDialog QStackedWidget { background: transparent; }
-        QDialog QWidget#StartupBrand { background: @primary_hover; }
+        QDialog QWidget#StartupBrand { background: transparent; }
         QDialog QFrame#StartupSurface {
             background: @surface;
             border: none;
-            border-radius: 18px;
+            border-top-left-radius: 0px;
+            border-bottom-left-radius: 0px;
+            border-top-right-radius: 18px;
+            border-bottom-right-radius: 18px;
         }
         QDialog QFrame#StartupSurface QLabel { color: @text_primary; }
         QDialog *#StartupEyebrow {
@@ -422,8 +426,8 @@ class StartupDialog(QDialog):
         QDialog *#LoadingProfileName { color: @text_primary; font-size: 13px; font-weight: 600; }
         QDialog *#LoadingProfileMeta { color: @text_secondary; font-size: 10px; }
         QDialog *#StartupStep { color: @disabled; font-size: 11px; font-weight: 400; }
-        QDialog *#StartupStep[state="active"] { color: @text_primary; font-weight: 600; }
-        QDialog *#StartupStep[state="complete"] { color: @text_primary; }
+        QDialog *#StartupStep[state="active"] { color: @primary; font-weight: 650; }
+        QDialog *#StartupStep[state="complete"] { color: @success; font-weight: 600; }
         QDialog *#StartupStep[state="danger"] { color: @danger; }
         QDialog *#SplashOrg {
             color: #BBD3CA;
@@ -571,9 +575,19 @@ class StartupDialog(QDialog):
         self._stack.addWidget(self._build_user_page())
         self._stack.addWidget(self._build_connect_page())
         self._stack.setCurrentIndex(0)
+        self._apply_rounded_window_mask()
         self.setWindowOpacity(1.0 if self._reduce_motion else 0.0)
         if not self._reduce_motion:
             QTimer.singleShot(80, self._start_splash_entrance)
+
+    def _apply_rounded_window_mask(self):
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), 18, 18)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_rounded_window_mask()
 
     # ── Page 1: User Selection ─────────────────────────────────────────────────
     def _build_startup_brand(self, *, loading=False):
@@ -791,44 +805,54 @@ class StartupDialog(QDialog):
         states = {
             "version": ("active", "pending", "pending", "pending"),
             "database": ("complete", "active", "pending", "pending"),
-            "workspace": ("complete", "complete", "active", "pending"),
+            "records": ("complete", "complete", "active", "pending"),
+            "workspace": ("complete", "complete", "complete", "active"),
             "complete": ("complete", "complete", "complete", "complete"),
-            "failed": ("danger", "pending", "pending", "pending"),
+            "failed": ("complete", "danger", "pending", "pending"),
         }.get(phase, ("pending", "pending", "pending", "pending"))
         copy = (
             {
-                "pending": "Checking database connection",
-                "active": "Checking database connection",
-                "complete": "Checking database connection",
-                "danger": "Database connection unavailable",
+                "pending": "Checking application version",
+                "active": "Checking application version",
+                "complete": "Application version checked",
+                "danger": "Version check unavailable",
             },
             {
-                "pending": "Loading application settings",
-                "active": "Loading application settings",
-                "complete": "Loading application settings",
+                "pending": "Connecting to office database",
+                "active": "Connecting to office database",
+                "complete": "Office database connected",
+                "danger": "Database connection unavailable",
             },
             {
                 "pending": "Loading student records",
                 "active": "Loading student records",
-                "complete": "Loading student records",
+                "complete": "Student records ready",
             },
             {
                 "pending": "Preparing dashboard",
                 "active": "Preparing dashboard",
-                "complete": "Preparing dashboard",
+                "complete": "Dashboard ready",
             },
         )
         glyphs = {
             "complete": "✓",
-            "active": "•",
+            "active": "●",
             "pending": " ",
             "danger": "×",
         }
         for label, state, labels in zip(self._loading_step_labels, states, copy):
+            previous_state = label.property("state")
             label.setProperty("state", state)
             label.setText(f"{glyphs[state]}     {labels.get(state, labels['pending'])}")
+            label.setAccessibleDescription(labels.get(state, labels["pending"]))
             label.style().unpolish(label)
             label.style().polish(label)
+            if previous_state != state and state in {"active", "complete"}:
+                fade_in(
+                    label,
+                    motion_enabled=not self._reduce_motion,
+                    duration_ms=180,
+                )
 
     def _start_splash_entrance(self):
         """Start compositor-safe splash motion without child paint effects."""
@@ -1035,7 +1059,7 @@ class StartupDialog(QDialog):
         lay.addWidget(self._connect_actions)
 
         motion_note = QLabel(
-            "Motion: 180 ms entrance  •  760 ms progress pulse  •  success handoff under 1 second"
+            "Four guided checks  •  short ease-out transitions  •  reduced-motion ready"
         )
         motion_note.setObjectName("StartupMotionNote")
         lay.addWidget(motion_note)
@@ -1049,8 +1073,8 @@ class StartupDialog(QDialog):
         self.loading_title.setText(f"Welcome, {self.selected_user}")
         self.status_label.setStyleSheet("")
         self._set_loading_phase("version")
-        self._set_loading_status("Loading application settings")
-        self._set_loading_progress(25)
+        self._set_loading_status("Checking application version")
+        self._set_loading_progress(15)
         self._pending_sb = sb  # keep ref so _on_update_checked can use it
 
         # --- AUTO UPDATE CHECK (non-blocking) ---
@@ -1091,7 +1115,7 @@ class StartupDialog(QDialog):
         """Continue startup if an update cannot be installed."""
         self._set_loading_phase("database")
         self._set_loading_status("Checking database connection")
-        self._set_loading_progress(75)
+        self._set_loading_progress(42)
         self._start_normal_boot(self._pending_sb)
 
     def _resume_boot_after_version_check_error(self):
@@ -1104,14 +1128,14 @@ class StartupDialog(QDialog):
         self._set_loading_progress(50)
         self.status_label.setText(message)
         QTimer.singleShot(
-            160 if self._reduce_motion else 950,
+            120 if self._reduce_motion else 520,
             self._continue_after_version_check,
         )
 
     def _continue_after_version_check(self):
         self._set_loading_phase("database")
-        self._set_loading_status("Loading student records")
-        self._set_loading_progress(75)
+        self._set_loading_status("Connecting to office database")
+        self._set_loading_progress(42)
         self._start_normal_boot(self._pending_sb)
 
     def _start_normal_boot(self, sb):
@@ -1160,16 +1184,30 @@ class StartupDialog(QDialog):
         if self._dot_timer:
             self._dot_timer.stop()
         self.success = True
-        self._set_loading_phase("complete")
-        self.status_label.setText("Workspace ready")
         self.loading_title.setText(f"Welcome, {self.selected_user}")
 
         if self._reduce_motion:
+            self._set_loading_phase("complete")
+            self.status_label.setText("Workspace ready")
             self.progress.setValue(100)
             self.progress_value_label.setText("100%")
             QTimer.singleShot(250, self.accept)
             return
 
+        self._set_loading_phase("records")
+        self._set_loading_status("Loading student records")
+        self._set_loading_progress(68)
+        QTimer.singleShot(420, self._show_dashboard_startup_step)
+
+    def _show_dashboard_startup_step(self):
+        self._set_loading_phase("workspace")
+        self._set_loading_status("Preparing dashboard")
+        self._set_loading_progress(88)
+        QTimer.singleShot(420, self._finish_startup_sequence)
+
+    def _finish_startup_sequence(self):
+        self._set_loading_phase("complete")
+        self.status_label.setText("Workspace ready")
         self._progress_anim = QPropertyAnimation(self.progress, b"value", self)
         self._progress_anim.setDuration(240)
         self._progress_anim.setStartValue(self.progress.value())
@@ -1178,7 +1216,7 @@ class StartupDialog(QDialog):
 
         self.progress_value_label.setText("100%")
         self._progress_anim.start()
-        QTimer.singleShot(650, self.accept)
+        QTimer.singleShot(620, self.accept)
 
     def _on_failed(self, msg):
         if self._dot_timer:
@@ -1742,6 +1780,60 @@ class StudentApp(QMainWindow):
         self._update_profile_layout()
         self._relayout_dashboard_metrics()
         self._relayout_dashboard_insights()
+        self._relayout_expense_entry()
+
+    def _relayout_expense_entry(self) -> None:
+        grid = getattr(self, "expense_add_grid", None)
+        if grid is None:
+            return
+        compact = self.width() < 1120
+        card = self.expense_add_card
+        card.setFixedHeight(184 if compact else 118)
+        widgets = (
+            self.expense_description_label,
+            self.expense_amount_label,
+            self.expense_date_label,
+            self.expense_year_label,
+            self.exp_desc,
+            self.exp_amount,
+            self.exp_date,
+            self.exp_sy_entry,
+            self.add_expense_btn,
+        )
+        for widget in widgets:
+            grid.removeWidget(widget)
+        for column in range(5):
+            grid.setColumnStretch(column, 0)
+
+        if compact:
+            grid.addWidget(self.expense_description_label, 0, 0, 1, 2)
+            grid.addWidget(self.expense_amount_label, 0, 2)
+            grid.addWidget(self.exp_desc, 1, 0, 1, 2)
+            grid.addWidget(self.exp_amount, 1, 2)
+            grid.addWidget(self.expense_date_label, 2, 0)
+            grid.addWidget(self.expense_year_label, 2, 1)
+            grid.addWidget(self.exp_date, 3, 0)
+            grid.addWidget(self.exp_sy_entry, 3, 1)
+            grid.addWidget(self.add_expense_btn, 3, 2)
+            grid.setColumnStretch(0, 2)
+            grid.setColumnStretch(1, 1)
+            grid.setColumnStretch(2, 1)
+            self.exp_date.setMinimumWidth(0)
+        else:
+            grid.addWidget(self.expense_description_label, 0, 0)
+            grid.addWidget(self.expense_amount_label, 0, 1)
+            grid.addWidget(self.expense_date_label, 0, 2)
+            grid.addWidget(self.expense_year_label, 0, 3)
+            grid.addWidget(self.exp_desc, 1, 0)
+            grid.addWidget(self.exp_amount, 1, 1)
+            grid.addWidget(self.exp_date, 1, 2)
+            grid.addWidget(self.exp_sy_entry, 1, 3)
+            grid.addWidget(self.add_expense_btn, 1, 4)
+            grid.setColumnStretch(0, 3)
+            grid.setColumnStretch(1, 1)
+            grid.setColumnStretch(2, 1)
+            grid.setColumnStretch(3, 1)
+            self.exp_date.setMinimumWidth(190)
 
     def _update_profile_layout(self) -> None:
         """Preserve the Figma profile geometry while keeping 980px usable."""
@@ -4198,7 +4290,9 @@ class StudentApp(QMainWindow):
         cm = datetime.date.today().month
         cur_sy = f"{cy}-{cy+1}" if cm >= 6 else f"{cy-1}-{cy}"
         idx = self.exp_school_year.findText(cur_sy)
-        if idx >= 0: self.exp_school_year.setCurrentIndex(idx)
+        # Show the complete synchronized history first. A current-year default
+        # made valid imported expenses from prior years look missing.
+        self.exp_school_year.setCurrentIndex(0)
         self.exp_school_year.currentTextChanged.connect(self._on_sy_changed)
         self.exp_school_year.setMinimumWidth(150)
         sy_layout.addWidget(self.expenses_title)
@@ -4269,6 +4363,7 @@ class StudentApp(QMainWindow):
 
         # Add expense card
         add_card = Card()
+        self.expense_add_card = add_card
         add_card.setFixedHeight(118)
         add_layout = QVBoxLayout(add_card)
         add_layout.setContentsMargins(16, 16, 16, 16)
@@ -4278,18 +4373,19 @@ class StudentApp(QMainWindow):
         add_layout.addWidget(add_hdr)
 
         add_grid = QGridLayout()
+        self.expense_add_grid = add_grid
         add_grid.setHorizontalSpacing(8)
         add_grid.setVerticalSpacing(6)
         self.exp_desc = QLineEdit(); self.exp_desc.setPlaceholderText("Description")
         self.exp_desc.setMinimumHeight(40)
-        self.exp_amount = QLineEdit(); self.exp_amount.setPlaceholderText("Amount e.g. 250.00")
+        self.exp_amount = QLineEdit(); self.exp_amount.setPlaceholderText("0.00")
         self.exp_amount.setMinimumHeight(40)
         self.exp_date = QDateEdit()
         self.exp_date.setCalendarPopup(True)
         self.exp_date.setDisplayFormat("yyyy-MM-dd")
         self.exp_date.setDate(QDate.currentDate())
         self.exp_date.setMinimumHeight(40)
-        self.exp_date.setMinimumWidth(170)
+        self.exp_date.setMinimumWidth(190)
         self.exp_date.setCursor(Qt.CursorShape.PointingHandCursor)
         self.exp_date.setToolTip("Open the calendar to choose an expense date.")
         self.exp_sy_entry = QComboBox()
@@ -4299,18 +4395,18 @@ class StudentApp(QMainWindow):
         self.add_expense_btn = PrimaryPushButton("Add expense")
         set_content_hugging_button(self.add_expense_btn)
         self.add_expense_btn.clicked.connect(self.add_expense)
-        description_label = QLabel("Description")
-        description_label.setObjectName("FieldLabel")
-        amount_label = QLabel("Amount (PHP)")
-        amount_label.setObjectName("FieldLabel")
-        date_label = QLabel("Expense date")
-        date_label.setObjectName("FieldLabel")
-        entry_year_label = QLabel("School year")
-        entry_year_label.setObjectName("FieldLabel")
-        add_grid.addWidget(description_label, 0, 0)
-        add_grid.addWidget(amount_label, 0, 1)
-        add_grid.addWidget(date_label, 0, 2)
-        add_grid.addWidget(entry_year_label, 0, 3)
+        self.expense_description_label = QLabel("Description")
+        self.expense_description_label.setObjectName("FieldLabel")
+        self.expense_amount_label = QLabel("Amount (PHP)")
+        self.expense_amount_label.setObjectName("FieldLabel")
+        self.expense_date_label = QLabel("Expense date")
+        self.expense_date_label.setObjectName("FieldLabel")
+        self.expense_year_label = QLabel("School year")
+        self.expense_year_label.setObjectName("FieldLabel")
+        add_grid.addWidget(self.expense_description_label, 0, 0)
+        add_grid.addWidget(self.expense_amount_label, 0, 1)
+        add_grid.addWidget(self.expense_date_label, 0, 2)
+        add_grid.addWidget(self.expense_year_label, 0, 3)
         add_grid.addWidget(self.exp_desc, 1, 0)
         add_grid.addWidget(self.exp_amount, 1, 1)
         add_grid.addWidget(self.exp_date, 1, 2)
@@ -4322,6 +4418,7 @@ class StudentApp(QMainWindow):
         add_grid.setColumnStretch(3, 1)
         add_layout.addLayout(add_grid)
         layout.addWidget(add_card)
+        self._relayout_expense_entry()
 
         # Expenses table
         table_card = Card()
@@ -4343,6 +4440,8 @@ class StudentApp(QMainWindow):
         self.expenses_table.setObjectName("ExpensesTable")
         self.expenses_table.setHorizontalHeaderLabels(["Description", "Amount (PHP)", "Date", "School year", ""])
         self.expenses_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.expenses_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.expenses_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.expenses_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.expenses_table.horizontalHeader().setStretchLastSection(False)
         self.expenses_table.verticalHeader().setVisible(False)
@@ -6478,7 +6577,11 @@ class StudentApp(QMainWindow):
                 self._add_expense_to_table(exp)
             self.expenses_empty_state.title_label.setText("No expenses recorded")
             self.expenses_empty_state.description_label.setText(
-                "Add the first expense for this school year using the form above."
+                (
+                    "No expenses have been recorded for this student."
+                    if sy_filter == ExpenseService.ALL_YEARS
+                    else "Add the first expense for this school year using the form above."
+                )
             )
             self.expenses_empty_state.setAccessibleName("No expenses recorded")
             self.expense_history_stack.setCurrentWidget(

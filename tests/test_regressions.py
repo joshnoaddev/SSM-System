@@ -59,6 +59,7 @@ from office_app.ui.views.student_list_model import (
     StudentCardDelegate,
     StudentListModel,
 )
+from office_app.ui.views.student_list_view import StudentListView
 from tools.import_manila_students import parse_expenses, split_name
 
 
@@ -94,8 +95,35 @@ class StartupDialogRegressionTests(unittest.TestCase):
 
         states = [label.property("state") for label in self.dialog._loading_step_labels]
         self.assertEqual(["complete", "active", "pending", "pending"], states)
-        self.assertIn("database", self.dialog._loading_step_labels[0].text().lower())
-        self.assertIn("settings", self.dialog._loading_step_labels[1].text().lower())
+        self.assertIn("version", self.dialog._loading_step_labels[0].text().lower())
+        self.assertIn("database", self.dialog._loading_step_labels[1].text().lower())
+
+    def test_loading_steps_advance_one_at_a_time(self):
+        expected = {
+            "version": ["active", "pending", "pending", "pending"],
+            "database": ["complete", "active", "pending", "pending"],
+            "records": ["complete", "complete", "active", "pending"],
+            "workspace": ["complete", "complete", "complete", "active"],
+            "complete": ["complete", "complete", "complete", "complete"],
+            "failed": ["complete", "danger", "pending", "pending"],
+        }
+
+        for phase, states in expected.items():
+            self.dialog._set_loading_phase(phase)
+            self.assertEqual(
+                states,
+                [
+                    label.property("state")
+                    for label in self.dialog._loading_step_labels
+                ],
+            )
+
+    def test_startup_window_uses_a_real_rounded_mask(self):
+        mask = self.dialog.mask()
+
+        self.assertFalse(mask.isEmpty())
+        self.assertTrue(mask.contains(self.dialog.rect().center()))
+        self.assertFalse(mask.contains(self.dialog.rect().topLeft()))
 
     def test_continue_action_matches_full_width_figma_control(self):
         self.dialog.show()
@@ -121,6 +149,53 @@ class StartupDialogRegressionTests(unittest.TestCase):
                 [f"•  {note}" for note in UpdaterService.CURRENT_RELEASE_NOTES],
                 [label.text() for label in note_labels],
             )
+
+
+class StudentListFilterRegressionTests(unittest.TestCase):
+    def setUp(self):
+        _qt_application()
+
+    def test_visible_sponsor_selector_lists_real_sponsor_names(self):
+        repository = SimpleNamespace(
+            list_students=lambda **_kwargs: [
+                {"sponsor": "Word of Life"},
+                {"sponsor": "Schnurbein"},
+                {"sponsor": "Word of Life"},
+                {"sponsor": ""},
+            ],
+            search_students=lambda **_kwargs: [],
+        )
+
+        def run_now(function, on_success=None, on_error=None):
+            try:
+                result = function()
+            except Exception as error:
+                if on_error is not None:
+                    on_error(str(error))
+                return SimpleNamespace()
+            if on_success is not None:
+                on_success(result)
+            return SimpleNamespace()
+
+        view = StudentListView(
+            repository,
+            StudentListService(),
+            SimpleNamespace(),
+            run_background_fn=run_now,
+        )
+        view.refresh_sponsor_filter()
+
+        self.assertEqual(
+            ["All sponsors", "Schnurbein", "Word of Life"],
+            [
+                view.sponsor_select.itemText(index)
+                for index in range(view.sponsor_select.count())
+            ],
+        )
+        self.assertEqual(240, view.sponsor_select.width())
+        self.assertGreaterEqual(view.filter_status.width(), 148)
+        self.assertGreaterEqual(view.filter_grade.width(), 128)
+        view.close()
 
 
 class ButtonDensityRegressionTests(unittest.TestCase):
@@ -452,6 +527,22 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(
             service.sort_order(service.SORT_LAST_NAME),
             ["last_name", "first_name", "id"],
+        )
+
+    def test_sponsor_filter_options_are_named_deduplicated_and_sorted(self):
+        service = StudentListService()
+
+        self.assertEqual(
+            ["Community Partner", "Schnurbein", "Word of Life"],
+            service.sponsor_options(
+                [
+                    {"sponsor": "Word of Life"},
+                    {"sponsor": " Schnurbein "},
+                    {"sponsor": ""},
+                    {"sponsor": "Community Partner"},
+                    {"sponsor": "Word of Life"},
+                ]
+            ),
         )
 
     def test_name_search_uses_quoted_server_filter(self):

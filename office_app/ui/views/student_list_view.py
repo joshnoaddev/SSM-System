@@ -55,6 +55,7 @@ class StudentListView(QWidget):
         self._student_list_request = 0
         self._area_request = 0
         self._grade_request = 0
+        self._sponsor_request = 0
         self.student_list_mode = "all"
         self._student_list_rows = []
         self._area_options = []
@@ -78,7 +79,7 @@ class StudentListView(QWidget):
         search_row = QHBoxLayout()
         search_row.setSpacing(8)
         self.search_name = LineEdit()
-        self.search_name.setPlaceholderText("Search student name or barangay")
+        self.search_name.setPlaceholderText("Search students")
         self.search_name.setAccessibleName("Search students by name")
         self.search_name.setClearButtonEnabled(True)
         self.search_name.setMinimumWidth(190)
@@ -93,7 +94,7 @@ class StudentListView(QWidget):
         self.filter_grade = ComboBox()
         self.filter_grade.addItem(self.student_list_service.ALL_GRADES)
         self.filter_grade.setAccessibleName("Filter students by grade")
-        self.filter_grade.setFixedWidth(112)
+        self.filter_grade.setFixedWidth(128)
         self.filter_grade.setFixedHeight(38)
         self.filter_status = ComboBox()
         self.filter_status.addItem("All statuses", "All")
@@ -101,22 +102,26 @@ class StudentListView(QWidget):
         self.filter_status.addItem("Inactive", "Inactive/Removed")
         self.filter_status.addItem("Graduated", "Graduated")
         self.filter_status.setAccessibleName("Filter students by status")
-        self.filter_status.setFixedWidth(124)
+        self.filter_status.setFixedWidth(148)
         self.filter_status.setFixedHeight(38)
 
+        self.sponsor_select = ComboBox()
+        self.sponsor_select.addItem("All sponsors", "")
+        self.sponsor_select.setAccessibleName("Filter students by sponsor")
+        self.sponsor_select.setAccessibleDescription(
+            "Choose a sponsor name to show only their students."
+        )
+        self.sponsor_select.setFixedWidth(240)
+        self.sponsor_select.setFixedHeight(34)
+        self.sponsor_select.setToolTip("Choose a sponsor name")
+
+        # Last-name ordering remains the stable directory default. The former
+        # Sponsor sort is now the sponsor-name filter users expected.
         self.sort_select = ComboBox()
         self.sort_select.addItem(
             "Last name", self.student_list_service.SORT_LAST_NAME,
         )
-        self.sort_select.addItem(
-            "Sponsor", self.student_list_service.SORT_SPONSOR,
-        )
-        self.sort_select.setAccessibleName("Sort students by")
-        self.sort_select.setAccessibleDescription(
-            "Sort the student directory by last name or sponsor."
-        )
-        self.sort_select.setFixedWidth(138)
-        self.sort_select.setFixedHeight(34)
+        self.sort_select.hide()
 
         clear_btn = ActionButton("Clear", variant="tertiary")
         refresh_btn = ActionButton("Refresh", variant="tertiary")
@@ -152,11 +157,11 @@ class StudentListView(QWidget):
         self.count_label.setObjectName("StudentDirectoryLabel")
         actions_row.addWidget(self.count_label)
         actions_row.addStretch(1)
-        sort_label = QLabel("Sort by")
-        sort_label.setObjectName("Caption")
-        sort_label.setBuddy(self.sort_select)
-        actions_row.addWidget(sort_label)
-        actions_row.addWidget(self.sort_select)
+        sponsor_label = QLabel("Sponsor")
+        sponsor_label.setObjectName("Caption")
+        sponsor_label.setBuddy(self.sponsor_select)
+        actions_row.addWidget(sponsor_label)
+        actions_row.addWidget(self.sponsor_select)
         # Clear and refresh are covered by the search affordance and shared
         # page header. Import remains callable from Workbook without adding a
         # second, visually noisy action cluster here.
@@ -177,7 +182,12 @@ class StudentListView(QWidget):
         self.search_sponsor.textChanged.connect(self._search_timer.start)
         self.filter_grade.currentTextChanged.connect(self.load_student_list)
         self.filter_status.currentTextChanged.connect(self.load_student_list)
-        self.sort_select.currentTextChanged.connect(self.load_student_list)
+        self.sponsor_select.currentIndexChanged.connect(self.load_student_list)
+        self.sponsor_select.currentTextChanged.connect(
+            lambda text: self.sponsor_select.setToolTip(
+                text if text != "All sponsors" else "Choose a sponsor name"
+            )
+        )
 
         # Kept as a hidden compatibility control for export state restoration.
         self.area_select = ComboBox()
@@ -314,7 +324,10 @@ class StudentListView(QWidget):
         request_id = self._student_list_request if request_id is None else request_id
         offset = 0 if reset else self._page_offset
         name_q = self.search_name.text().strip()
-        sponsor_q = self.search_sponsor.text().strip()
+        sponsor_q = (
+            self.search_sponsor.text().strip()
+            or str(self.sponsor_select.currentData() or "").strip()
+        )
         area_q = self._selected_area
         status_text = self.filter_status.currentText()
         status = {
@@ -413,17 +426,18 @@ class StudentListView(QWidget):
     def clear_student_filters(self):
         for widget in (
             self.search_name, self.search_sponsor, self.filter_grade,
-            self.filter_status, self.sort_select,
+            self.filter_status, self.sponsor_select, self.sort_select,
         ):
             widget.blockSignals(True)
         self.search_name.clear()
         self.search_sponsor.clear()
         self.filter_grade.setCurrentIndex(0)
         self.filter_status.setCurrentIndex(0)
+        self.sponsor_select.setCurrentIndex(0)
         self.sort_select.setCurrentIndex(0)
         for widget in (
             self.search_name, self.search_sponsor, self.filter_grade,
-            self.filter_status, self.sort_select,
+            self.filter_status, self.sponsor_select, self.sort_select,
         ):
             widget.blockSignals(False)
         self._select_area("", reload=False)
@@ -504,9 +518,47 @@ class StudentListView(QWidget):
 
         return self._run_background(fetch_options, apply_options, show_error)
 
+    def refresh_sponsor_filter(self):
+        current = str(self.sponsor_select.currentData() or "")
+        self._sponsor_request += 1
+        request_id = self._sponsor_request
+
+        def fetch_options():
+            rows = self.student_repository.list_students(
+                columns="last_name,first_name,birthday,sponsor"
+            )
+            return self.student_list_service.sponsor_options(
+                self._filter_current_rows(rows)
+            )
+
+        def apply_options(sponsors):
+            if request_id != self._sponsor_request:
+                return
+            self.sponsor_select.blockSignals(True)
+            self.sponsor_select.clear()
+            self.sponsor_select.addItem("All sponsors", "")
+            for sponsor in sponsors:
+                self.sponsor_select.addItem(sponsor, sponsor)
+            index = self.sponsor_select.findData(current) if current else 0
+            self.sponsor_select.setCurrentIndex(max(index, 0))
+            self.sponsor_select.setToolTip(
+                current or "Choose a sponsor name"
+            )
+            self.sponsor_select.blockSignals(False)
+
+        def show_error(error):
+            if request_id == self._sponsor_request:
+                self._status_message(
+                    f"Sponsor load error: {error.strip().splitlines()[-1]}",
+                    8000,
+                )
+
+        return self._run_background(fetch_options, apply_options, show_error)
+
     def refresh_filter_options(self):
         area_task = self.refresh_area_dropdown()
         self.refresh_grade_filter()
+        self.refresh_sponsor_filter()
         return area_task
 
     def _on_area_selected(self, item):
@@ -569,8 +621,23 @@ class StudentListView(QWidget):
             self.student_selected.emit(str(student_id))
 
     def export_all_students_to_excel(self):
-        old = (self.student_list_mode, self.filter_status.currentIndex(), self.search_name.text(), self.search_sponsor.text(), self.filter_grade.currentText(), self.area_select.currentText())
-        widgets = (self.filter_status, self.search_name, self.search_sponsor, self.filter_grade, self.area_select)
+        old = (
+            self.student_list_mode,
+            self.filter_status.currentIndex(),
+            self.search_name.text(),
+            self.search_sponsor.text(),
+            self.filter_grade.currentText(),
+            self.area_select.currentText(),
+            self.sponsor_select.currentIndex(),
+        )
+        widgets = (
+            self.filter_status,
+            self.search_name,
+            self.search_sponsor,
+            self.filter_grade,
+            self.area_select,
+            self.sponsor_select,
+        )
         try:
             for widget in widgets:
                 widget.blockSignals(True)
@@ -579,13 +646,23 @@ class StudentListView(QWidget):
             self.search_name.clear()
             self.search_sponsor.clear()
             self.filter_grade.setCurrentText(self.student_list_service.ALL_GRADES)
+            self.sponsor_select.setCurrentIndex(0)
             self.export_to_excel()
         finally:
-            self.student_list_mode, status_index, name, sponsor, grade, area = old
+            (
+                self.student_list_mode,
+                status_index,
+                name,
+                sponsor,
+                grade,
+                area,
+                sponsor_index,
+            ) = old
             self.filter_status.setCurrentIndex(status_index)
             self.search_name.setText(name)
             self.search_sponsor.setText(sponsor)
             self.filter_grade.setCurrentText(grade)
+            self.sponsor_select.setCurrentIndex(sponsor_index)
             area_index = self.area_select.findText(area)
             if area and area_index >= 0:
                 self.area_select.setCurrentIndex(area_index)
@@ -600,7 +677,10 @@ class StudentListView(QWidget):
             return None
         columns = "last_name,first_name,gender,grade,address,city,area,birthday,sponsor,contact,school,parents,course,remarks,status"
         name_q = self.search_name.text().strip()
-        sponsor_q = self.search_sponsor.text().strip()
+        sponsor_q = (
+            self.search_sponsor.text().strip()
+            or str(self.sponsor_select.currentData() or "").strip()
+        )
         area_q = self.area_select.currentText().strip() if self.student_list_mode == "areas" else ""
         status_text = self.filter_status.currentText()
         status = {
