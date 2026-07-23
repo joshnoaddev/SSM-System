@@ -445,6 +445,24 @@ class StartupDialog(QDialog):
             font-size: 10px;
             font-weight: 500;
         }
+        QDialog QFrame#StartupReleaseLog {
+            background: transparent;
+            border: none;
+        }
+        QDialog QFrame#StartupReleaseDivider {
+            background: rgba(255, 255, 255, 0.18);
+            border: none;
+        }
+        QDialog *#StartupReleaseEyebrow {
+            color: #F6C90E;
+            font-size: 8px;
+            font-weight: 700;
+        }
+        QDialog *#StartupReleaseItem {
+            color: #D9E9E3;
+            font-size: 9px;
+            font-weight: 400;
+        }
         QDialog *#StartupLogoText {
             color: @primary;
             font-size: 12px;
@@ -531,6 +549,7 @@ class StartupDialog(QDialog):
         self._pending_sb = None
         self.recovery_action = ""
         self._failure_actions = None
+        self._startup_release_logs = []
 
         self._signals = WorkerSignals()
         self._signals.connected.connect(self._on_connected)
@@ -606,6 +625,40 @@ class StartupDialog(QDialog):
         caption.setObjectName("SplashPrompt")
         caption.setWordWrap(True)
         layout.addWidget(caption)
+        layout.addSpacing(20)
+
+        release_log = QFrame()
+        release_log.setObjectName("StartupReleaseLog")
+        release_log.setAccessibleName(
+            f"What changed in SSM version {UpdaterService.CURRENT_VERSION}"
+        )
+        release_log.setAccessibleDescription(
+            ". ".join(UpdaterService.CURRENT_RELEASE_NOTES)
+        )
+        release_layout = QVBoxLayout(release_log)
+        release_layout.setContentsMargins(0, 0, 0, 0)
+        release_layout.setSpacing(4)
+
+        release_divider = QFrame()
+        release_divider.setObjectName("StartupReleaseDivider")
+        release_divider.setFixedHeight(1)
+        release_layout.addWidget(release_divider)
+        release_layout.addSpacing(7)
+
+        release_eyebrow = NativeLabel(
+            f"WHAT CHANGED  ·  v{UpdaterService.CURRENT_VERSION}"
+        )
+        release_eyebrow.setObjectName("StartupReleaseEyebrow")
+        release_layout.addWidget(release_eyebrow)
+
+        for note in UpdaterService.CURRENT_RELEASE_NOTES:
+            note_label = NativeLabel(f"•  {note}")
+            note_label.setObjectName("StartupReleaseItem")
+            note_label.setWordWrap(True)
+            release_layout.addWidget(note_label)
+
+        layout.addWidget(release_log)
+        self._startup_release_logs.append(release_log)
         layout.addStretch(1)
 
         version = NativeLabel(f"SSM v{UpdaterService.CURRENT_VERSION}")

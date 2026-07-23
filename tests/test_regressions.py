@@ -14,6 +14,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
+    QFrame,
     QGraphicsDropShadowEffect,
     QLabel,
     QMessageBox,
@@ -105,6 +106,21 @@ class StartupDialogRegressionTests(unittest.TestCase):
             self.dialog._continue_btn.sizePolicy().horizontalPolicy(),
         )
         self.assertGreaterEqual(self.dialog._continue_btn.width(), 340)
+
+    def test_release_notes_are_visible_on_both_startup_phases(self):
+        logs = self.dialog.findChildren(QFrame, "StartupReleaseLog")
+
+        self.assertEqual(2, len(logs))
+        for log in logs:
+            self.assertIn(
+                UpdaterService.CURRENT_VERSION,
+                log.accessibleName(),
+            )
+            note_labels = log.findChildren(QLabel, "StartupReleaseItem")
+            self.assertEqual(
+                [f"•  {note}" for note in UpdaterService.CURRENT_RELEASE_NOTES],
+                [label.text() for label in note_labels],
+            )
 
 
 class ButtonDensityRegressionTests(unittest.TestCase):
@@ -297,6 +313,16 @@ class _FinancialClient:
 
 
 class RegressionTests(unittest.TestCase):
+    def test_release_version_rolls_over_after_patch_nine(self):
+        self.assertEqual(
+            "1.1.0",
+            UpdaterService.next_release_version("1.0.9"),
+        )
+        self.assertEqual(
+            "1.2.5",
+            UpdaterService.next_release_version("1.0.24"),
+        )
+
     def test_fast_background_tasks_expose_completion_state(self):
         task = BackgroundTask(lambda: "ready")
 

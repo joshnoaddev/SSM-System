@@ -7,7 +7,12 @@ import threading
 
 class UpdaterService:
     # Change this whenever you compile a new .exe!
-    CURRENT_VERSION = "1.0.24"
+    CURRENT_VERSION = "1.2.5"
+    CURRENT_RELEASE_NOTES = (
+        "Photo and expense actions restored",
+        "Manila records added to the database",
+        "Release notes now appear at startup",
+    )
     MIN_INSTALLER_BYTES = 40 * 1024 * 1024
 
     def __init__(self, client):
@@ -20,6 +25,15 @@ class UpdaterService:
             return tuple(int(x) for x in v.strip().split("."))
         except (ValueError, AttributeError):
             return (0, 0, 0)
+
+    @classmethod
+    def next_release_version(cls, version: str) -> str:
+        """Increment versions with a patch rollover after nine."""
+        major, minor, patch = (cls._parse_version(version) + (0, 0, 0))[:3]
+        patch += 1
+        minor += patch // 10
+        patch %= 10
+        return f"{major}.{minor}.{patch}"
 
     @classmethod
     def _validate_downloaded_exe(cls, path: str) -> None:
