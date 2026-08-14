@@ -4,34 +4,34 @@ from PyQt6.QtGui import QColor
 
 LIGHT_THEME = {
     # Brand
-    "primary": "#073C33",
-    "primary_hover": "#0B5144",
-    "primary_pressed": "#052E27",
-    "primary_soft": "#EAF3EF",
-    "primary_selected": "#DCEDE6",
-    "secondary": "#60756F",
-    "accent": "#F2B705",
-    "accent_soft": "#FFF4CF",
+    "primary": "#063E34",
+    "primary_hover": "#0B5345",
+    "primary_pressed": "#042F28",
+    "primary_soft": "#E8F2ED",
+    "primary_selected": "#D7EAE2",
+    "secondary": "#61756F",
+    "accent": "#EFB80B",
+    "accent_soft": "#FFF3C9",
 
     # Surfaces
-    "app_background": "#FAF8F3",
-    "surface": "#FFFDF9",
-    "surface_subtle": "#EAF3EF",
+    "app_background": "#F5F3ED",
+    "surface": "#FFFEFB",
+    "surface_subtle": "#EDF3F0",
     "surface_raised": "#FFFFFF",
 
     # Text
-    "text_primary": "#17322C",
-    "text_secondary": "#60756F",
-    "text_disabled": "#8A9B96",
+    "text_primary": "#132E28",
+    "text_secondary": "#5E716B",
+    "text_disabled": "#879690",
 
     # Borders
-    "border": "#DDE5DF",
-    "border_subtle": "#E3E9E5",
+    "border": "#D6DFDA",
+    "border_subtle": "#E4E9E6",
 
     # Navigation shell
-    "sidebar": "#073C33",
-    "sidebar_surface": "#10483E",
-    "sidebar_selected": "#19574B",
+    "sidebar": "#06382F",
+    "sidebar_surface": "#10483D",
+    "sidebar_selected": "#18584B",
     "sidebar_text": "#F8F6EF",
     "sidebar_muted": "#A9C9BF",
     "sidebar_nav": "#D9E8E3",
@@ -70,7 +70,7 @@ LIGHT_THEME = {
 
     # Misc
     "on_brand": "#FFFFFF",
-    "shadow": "#26352F",
+    "shadow": "#17372F",
     "splash_start": "#0A241D",
     "splash_end": "#176B52",
 
@@ -84,8 +84,8 @@ LIGHT_THEME = {
 
     # Radii
     "radius_sm": "4px",
-    "radius_md": "8px",
-    "radius_lg": "12px",
+    "radius_md": "9px",
+    "radius_lg": "14px",
     "radius_pill": "999px",
 }
 

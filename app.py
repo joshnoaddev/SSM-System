@@ -1480,7 +1480,7 @@ class StudentApp(QMainWindow):
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(28, 20, 28, 18)
         # This places every page body on the 96px Figma baseline.
-        content_layout.setSpacing(26)
+        content_layout.setSpacing(22)
 
         # Workspace header: page context on the left, live office state on the right.
         header = QFrame()
@@ -1489,6 +1489,14 @@ class StudentApp(QMainWindow):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(14)
 
+        self.header_mark = QFrame()
+        self.header_mark.setObjectName("HeaderMark")
+        self.header_mark.setFixedSize(3, 38)
+        header_layout.addWidget(
+            self.header_mark,
+            alignment=Qt.AlignmentFlag.AlignVCenter,
+        )
+
         title_layout = QVBoxLayout()
         title_layout.setSpacing(3)
         today = datetime.now().strftime("%A, %B %d").replace(" 0", " ")
@@ -1496,7 +1504,7 @@ class StudentApp(QMainWindow):
             f"STUDENT SUPPORT OFFICE  /  {today.upper()}"
         )
         self.page_eyebrow_label.setObjectName("HeaderEyebrow")
-        self.page_eyebrow_label.hide()
+        self.page_eyebrow_label.show()
         self.page_title_label = TitleLabel("Dashboard")
         self.page_title_label.setObjectName("HeaderTitle")
         self.page_subtitle_label = SubtitleLabel(
@@ -2071,12 +2079,13 @@ class StudentApp(QMainWindow):
             return
         compact = self.width() < 1120
         self.page_subtitle_label.setVisible(not compact)
+        self.page_eyebrow_label.setVisible(not compact)
+        self.header_mark.setVisible(not compact)
         self._update_page_header(self.stacked_widget.currentIndex())
         if hasattr(self, "sync_panel"):
             self.sync_panel.setFixedHeight(126 if compact else 96)
         if hasattr(self, "settings_view"):
             self.settings_view.set_compact(compact)
-        self.page_eyebrow_label.hide()
 
     def _dashboard_greeting(self) -> str:
         hour = time.localtime().tm_hour
