@@ -97,7 +97,7 @@ After the file is uploaded, publish the update URL to Supabase:
 
 ```powershell
 $env:SSM_SUPABASE_SERVICE_KEY = "your-secret-service-role-key"
-.\.venv\Scripts\python.exe .\publish_update.py --download-url "https://github.com/0superweak/SSM-System/releases/download/v1.0.1/SSM_Student_Profiling.exe"
+.\.venv\Scripts\python.exe .\publish_update.py --download-url "https://github.com/joshnoaddev/SSM-System/releases/download/v1.0.1/SSM_Student_Profiling.exe"
 ```
 
 Use the real release URL and version tag for the build you uploaded. Do not copy
