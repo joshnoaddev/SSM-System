@@ -12,3 +12,28 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# UI review screenshots (local scratch, not part of the app)
+_screenshots/
+
+# Build and release output
+dist/
+*.spec.bak
+
+# Local data exports and import scratch
+outputs/
+.codex_manila_import/
+
+# Editor, agent, and tooling state
+.agents/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.vscode/
+.zed/
+.mcp.json
+.npm-cache/
+config/mcporter.json
+opencode.json
+skills-lock.json
