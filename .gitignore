@@ -17,8 +17,14 @@ __pycache__/
 _screenshots/
 
 # Build and release output
+build/
 dist/
 *.spec.bak
+
+# Exported student data. This is personal information about minors and must
+# never be committed, even to a private repository.
+*.xlsx
+!assets/**/*.xlsx
 
 # Local data exports and import scratch
 outputs/
